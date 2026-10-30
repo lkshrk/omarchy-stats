@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-# Usage: stats-detail [disk-mount] [gpu] prints the popups' JSON snapshot (gpu adds its top processes); stats-detail --device [disk-mount] the disk's kernel name.
+# Usage: stats-detail [disk-mount] [gpu] [drives] prints the popups' JSON snapshot (gpu adds its top processes, drives every mounted drive); stats-detail --device [disk-mount] the disk's kernel name.
 set -u  # not -e: a failed probe must only blank its own field
 
 if [[ ${1:-} == --device ]]; then device_only=1; shift; fi
 MOUNT="${1:-/}"
-WITH_GPU="${2:-}"
+WITH_GPU=''
+WITH_DRIVES=''
+for extra in "${@:2}"; do
+  case $extra in
+    gpu) WITH_GPU=gpu ;;
+    drives) WITH_DRIVES=drives ;;
+  esac
+done
+
+disk_of() { lsblk -sno NAME,TYPE "$1" 2>/dev/null | awk '$2=="disk"{ sub(/^[^a-zA-Z0-9]*/, "", $1); print $1; exit }'; }
 
 src=$(findmnt -n -o SOURCE --target "$MOUNT" | sed 's/\[.*//')
-dev=$(lsblk -sno NAME,TYPE "$src" 2>/dev/null | awk '$2=="disk"{ sub(/^[^a-zA-Z0-9]*/, "", $1); print $1; exit }')
+dev=$(disk_of "$src")
 if [[ -n ${device_only:-} ]]; then echo "${dev:-$(basename "$src")}"; exit; fi
 
 top() { ps -eo comm=,"$1"= --sort=-"$1" | head -5 | jq -R -s -c 'split("\n") | map(select(length>0) | capture("^(?<name>.*?)\\s+(?<value>[0-9.]+)$") | .value |= tonumber)'; }
@@ -36,6 +45,25 @@ dns=$(resolvectl dns 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9a-f.:]
 net_rx=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo 0)
 net_tx=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo 0)
 
+# One entry per mounted partition; btrfs subvolumes of one partition count once, under their shortest mount.
+drives='[]'
+if [[ -n $WITH_DRIVES ]]; then
+  drives=$(findmnt -rn -o SOURCE,TARGET,FSTYPE | awk '$1 ~ /^\/dev\// { sub(/\[.*/, "", $1); print length($2), $1, $2, $3 }' | sort -n | {
+    declare -A seen
+    while read -r _ source target fstype; do
+      target=$(printf '%b' "$target")
+      [[ -n ${seen[$source]:-} ]] && continue
+      seen[$source]=1
+      disk=$(disk_of "$source")
+      read -r total used free < <(df -PB1 "$target" 2>/dev/null | awk 'NR==2{print $2, $3, $4}')
+      model=$(cat "/sys/block/$disk/device/model" 2>/dev/null | sed 's/ *$//')
+      jq -cn --arg mount "$target" --arg source "$source" --arg fstype "$fstype" --arg disk "${disk:-}" --arg model "${model:-}" \
+        --argjson total "${total:-0}" --argjson used "${used:-0}" --argjson free "${free:-0}" \
+        '{mount: $mount, source: $source, fstype: $fstype, disk: $disk, model: $model, total: $total, used: $used, free: $free}'
+    done
+  } | jq -s -c '.')
+fi
+
 gpu_top='[]'
 if [[ $WITH_GPU == gpu ]] && command -v nvidia-smi >/dev/null; then
   gpu_top=$(nvidia-smi pmon -c 1 -s m 2>/dev/null |
@@ -63,11 +91,12 @@ jq -n -c \
   --argjson totalRead "${total_read:-0}" --argjson totalWritten "${total_written:-0}" \
   --arg iface "${iface:-}" --arg ip "${local_ip:-}" --arg mac "${mac:-}" --arg dns "${dns:-}" \
   --argjson netRx "${net_rx:-0}" --argjson netTx "${net_tx:-0}" --argjson gpuTop "${gpu_top:-[]}" \
+  --argjson drives "${drives:-[]}" --arg mainSource "${src:-}" \
   '{cpu: {cores: $cores, load: [$load1, $load5, $load15], frequency: $freq, uptime: $uptime, top: $topCpu},
     ram: {total: $memTotal, used: ($memTotal - $memAvail), app: $app, cache: $cache, free: $memFree,
           swapTotal: $swapTotal, swapUsed: ($swapTotal - $swapFree), pressure: $pressure,
           top: ($topMem | map(.value *= 1024))},
     disk: {mount: $mount, device: $device, fstype: $fstype, model: $diskModel, total: $diskTotal, used: $diskUsed, free: $diskFree,
-           totalRead: $totalRead, totalWritten: $totalWritten},
+           totalRead: $totalRead, totalWritten: $totalWritten, source: $mainSource, drives: $drives},
     net: {interface: $iface, ip: $ip, mac: $mac, dns: $dns, totalDownload: $netRx, totalUpload: $netTx},
     gpu: {top: $gpuTop}}'

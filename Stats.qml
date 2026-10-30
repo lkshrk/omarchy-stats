@@ -30,13 +30,30 @@ BarWidget {
   readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk", "gpu"])
   onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
+  readonly property var tempIds: listSetting("temps", ["cpu"])
+  readonly property var driveMounts: listSetting("drives", null)
+
+  function sensorById(id) {
+    var list = root.stats.sensors
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]
+    return null
+  }
+
+  // The disk card's other drives: the `drives` mounts in that order, else every drive but /boot and /efi.
+  readonly property var otherDrives: {
+    var all = root.detail && root.detail.disk && root.detail.disk.drives ? root.detail.disk.drives : []
+    var main = root.detail ? root.detail.disk.source : ""
+    var others = all.filter(function(d) { return d.source !== main })
+    if (driveMounts === null) return others.filter(function(d) { return !/^\/(boot|efi)(\/|$)/.test(d.mount) })
+    return driveMounts.map(function(m) { return others.filter(function(d) { return d.mount === m })[0] }).filter(Boolean)
+  }
   readonly property var screen: QsWindow.window ? QsWindow.window.screen : null
   visible: !(screens instanceof Array) || screens.length === 0
     || (screen !== null && screens.some(function(s) { return s === screen.name || s === screen.model || s === screen.serialNumber }))
 
   Binding { target: root.stats; property: "diskMount"; value: root.diskMount; when: root.stats !== fallback }
   Binding { target: root.stats; property: "publicIpEnabled"; value: root.showPublicIp; when: root.stats !== fallback }
-  Binding { target: root.stats; property: "gpuEnabled"; value: root.items.indexOf("gpu") >= 0; when: root.stats !== fallback }
+  Binding { target: root.stats; property: "gpuEnabled"; value: root.items.indexOf("gpu") >= 0 || root.items.indexOf("temp") >= 0; when: root.stats !== fallback }
 
   QtObject {
     id: fallback
@@ -63,6 +80,8 @@ BarWidget {
     readonly property real cpuTemp: -1
     readonly property real diskTemp: -1
     readonly property var sensors: []
+    readonly property var diskTemps: ({})
+    readonly property var diskRates: ({})
     readonly property var cpuTempHistory: []
     readonly property string gpuKind: ""
     readonly property string gpuName: ""
@@ -115,7 +134,7 @@ BarWidget {
 
   Process {
     id: detailProc
-    command: [root.pluginDir + "stats-detail", root.stats.diskMount, root.openModule === "gpu" ? "gpu" : ""]
+    command: [root.pluginDir + "stats-detail", root.stats.diskMount, root.openModule === "gpu" ? "gpu" : "", root.openModule === "disk" ? "drives" : ""]
     stdout: StdioCollector {
       onStreamFinished: {
         try { root.detail = JSON.parse(String(text)) } catch (e) {}
@@ -324,6 +343,22 @@ BarWidget {
     }
   }
 
+  component DriveBlock: ColumnLayout {
+    id: block
+    required property var modelData
+    readonly property var rates: root.stats.diskRates[modelData.disk] || null
+    readonly property real temp: modelData.disk in root.stats.diskTemps ? root.stats.diskTemps[modelData.disk] : -1
+    Layout.fillWidth: true
+    Layout.topMargin: Style.space(4)
+    spacing: Style.space(4)
+
+    Field { name: block.modelData.mount + (block.modelData.model ? "  ·  " + block.modelData.model : ""); value: block.modelData.fstype }
+    Meter { fraction: block.modelData.total > 0 ? block.modelData.used / block.modelData.total : 0 }
+    Field { name: "Used"; value: root.size(block.modelData.used) + " / " + root.size(block.modelData.total) }
+    Field { name: "Read / write"; visible: block.rates !== null; value: block.rates ? root.speed(block.rates.read) + " / " + root.speed(block.rates.write) : "–" }
+    Field { name: "Temperature"; visible: block.temp >= 0; value: root.temperature(block.temp) }
+  }
+
   component TopList: Repeater {
     id: topList
     property bool memory: false
@@ -451,18 +486,7 @@ BarWidget {
         Field { name: "Read"; dot: root.downloadColor; value: root.speed(root.stats.diskRead) },
         Field { name: "Write"; dot: root.uploadColor; value: root.speed(root.stats.diskWrite) },
         Heading { text: root.detail ? root.detail.disk.mount + "  (" + root.detail.disk.fstype + ")" : "Usage" },
-        Rectangle {
-          Layout.fillWidth: true
-          implicitHeight: Style.space(6)
-          radius: height / 2
-          color: root.idleColor
-          Rectangle {
-            width: parent.width * Math.min(1, root.stats.disk / 100)
-            height: parent.height
-            radius: parent.radius
-            color: root.accent
-          }
-        },
+        Meter { fraction: root.stats.disk / 100 },
         Field { name: "Used"; value: root.detail ? root.size(root.detail.disk.used) + "  (" + root.stats.disk + "%)" : root.stats.disk + "%" },
         Field { name: "Free"; value: root.detail ? root.size(root.detail.disk.free) : "–" },
         Field { name: "Total"; value: root.detail ? root.size(root.detail.disk.total) : "–" },
@@ -470,7 +494,9 @@ BarWidget {
         Field { name: "Device"; value: root.detail ? root.detail.disk.device : "–" },
         Field { name: "Temperature"; visible: root.stats.diskTemp >= 0; value: root.temperature(root.stats.diskTemp) },
         Field { name: "Total read"; value: root.detail ? root.size(root.detail.disk.totalRead) : "–" },
-        Field { name: "Total written"; value: root.detail ? root.size(root.detail.disk.totalWritten) : "–" }
+        Field { name: "Total written"; value: root.detail ? root.size(root.detail.disk.totalWritten) : "–" },
+        Heading { text: "Other drives"; visible: root.otherDrives.length > 0 },
+        Repeater { model: root.otherDrives; DriveBlock {} }
       ]
     }
 
@@ -502,13 +528,24 @@ BarWidget {
     Module {
       name: "temp"
       BarText { text: "󰔏" }
-      BarText { text: root.temperature(root.stats.cpuTemp); Layout.minimumWidth: tempProbe.implicitWidth }
+      Repeater {
+        model: root.tempIds
+        BarText {
+          required property var modelData
+          required property int index
+          readonly property var sensor: root.sensorById(modelData)
+          text: root.tempIds.length > 1
+            ? (sensor ? sensor.short : modelData) + " " + (sensor ? Math.round(sensor.value) + "°" : "–")
+            : (sensor ? root.temperature(sensor.value) : "–")
+          Layout.leftMargin: index > 0 ? Style.spaceReal(4) : 0
+          Layout.minimumWidth: root.tempIds.length > 1 ? 0 : tempProbe.implicitWidth
+        }
+      }
 
       popupContent: [
         Heading { text: "CPU temperature"; Layout.topMargin: 0 },
         History { max: 100; series: [{ values: root.stats.cpuTempHistory, color: root.systemColor }] },
         Heading { text: "Sensors" },
-        Field { name: "GPU"; visible: root.stats.gpuKind === "nvidia" && root.stats.gpuTemp >= 0; value: root.temperature(root.stats.gpuTemp) },
         Repeater {
           model: root.stats.sensors
           Field {

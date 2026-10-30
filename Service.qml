@@ -26,6 +26,8 @@ Item {
   property real cpuTemp: -1
   property real diskTemp: -1
   property var sensors: []
+  property var diskTemps: ({})
+  property var diskRates: ({})
 
   property int gpu: 0
   property real gpuVramUsed: 0
@@ -102,6 +104,7 @@ Item {
   }
 
   function sensorValue(list, path) {
+    if (!path) return -1
     for (var i = 0; i < list.length; i++) if (list[i].path === path) return list[i].value
     return -1
   }
@@ -111,12 +114,16 @@ Item {
     for (var i = 0; i < sensorViews.count; i++) {
       var view = sensorViews.objectAt(i)
       if (!view) continue
-      var value = celsius(read(view))
-      if (value >= 0) list.push({ name: view.name, value: value, path: view.sensorPath })
+      var value = view.sensorPath === "" ? (gpuKind === "nvidia" ? gpuTemp : -1) : celsius(read(view))
+      if (value >= 0) list.push({ id: view.sensorId, name: view.name, short: view.short, value: value, path: view.sensorPath })
     }
     sensors = list
     cpuTemp = sensorValue(list, sensorInfo ? sensorInfo.cpu : "")
-    diskTemp = sensorValue(list, sensorInfo && sensorInfo.disks ? sensorInfo.disks[diskDevice] || "" : "")
+    var byDisk = {}
+    var diskPaths = sensorInfo && sensorInfo.disks ? sensorInfo.disks : {}
+    for (var disk in diskPaths) byDisk[disk] = sensorValue(list, diskPaths[disk])
+    diskTemps = byDisk
+    diskTemp = diskDevice in byDisk ? byDisk[diskDevice] : -1
     cpuTempHistory = pushed(cpuTempHistory, Math.max(0, cpuTemp))
   }
 
@@ -167,13 +174,13 @@ Item {
   }
 
   function diskSample(text) {
-    if (text === "" || diskDevice === "") return null
+    var bytes = {}
     var lines = text.split("\n")
     for (var i = 0; i < lines.length; i++) {
       var f = lines[i].trim().split(/\s+/)
-      if (f[2] === diskDevice) return { read: Number(f[5]) * 512, write: Number(f[9]) * 512 }
+      if (f.length > 9) bytes[f[2]] = { read: Number(f[5]) * 512, write: Number(f[9]) * 512 }
     }
-    return null
+    return bytes
   }
 
   function rate(now, before) {
@@ -184,11 +191,13 @@ Item {
     var c = cpuSample(read(statFile))
     var r = ramPercent(read(meminfoFile))
     var n = netSample(read(netFile))
-    var d = diskSample(read(diskstatsFile))
+    var disks = diskSample(read(diskstatsFile))
+    var d = diskDevice !== "" ? disks[diskDevice] || null : null
     var cur = {
       cpu: c,
       rx: n ? n.rx : null, tx: n ? n.tx : null,
-      dr: d ? d.read : null, dw: d ? d.write : null
+      dr: d ? d.read : null, dw: d ? d.write : null,
+      disks: disks
     }
     var p = prev
     prev = cur
@@ -213,6 +222,11 @@ Item {
     tx = rate(cur.tx, p.tx)
     diskRead = rate(cur.dr, p.dr)
     diskWrite = rate(cur.dw, p.dw)
+    var rates = {}
+    for (var name in cur.disks)
+      if (p.disks && name in p.disks)
+        rates[name] = { read: rate(cur.disks[name].read, p.disks[name].read), write: rate(cur.disks[name].write, p.disks[name].write) }
+    diskRates = rates
 
     cpuHistory = pushed(cpuHistory, cpu)
     ramHistory = pushed(ramHistory, ram)
@@ -243,7 +257,9 @@ Item {
     model: root.sensorInfo ? root.sensorInfo.sensors : []
     delegate: FileView {
       required property var modelData
+      readonly property string sensorId: modelData.id
       readonly property string name: modelData.name
+      readonly property string short: modelData.short
       readonly property string sensorPath: modelData.path
       path: modelData.path
       blockLoading: true

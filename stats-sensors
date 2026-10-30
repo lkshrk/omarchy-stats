@@ -1,25 +1,45 @@
 #!/usr/bin/env bash
-# Usage: stats-sensors prints JSON: the temperature sensors, the CPU and per-disk sensor, and the GPU to read.
+# Usage: stats-sensors prints JSON: every temperature sensor (id, name, short, path), the CPU and per-disk sensor, and the GPU to read.
 set -u
+shopt -s nullglob
 
 trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+slug() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//'; }
 
-hwmon_label() {
-  local name=$1 dev=$2
+# Prints "id<TAB>name" for a hwmon chip.
+hwmon_kind() {
+  local name=$1 dev=$2 disk=$3
   case $name in
-    k10temp | zenpower | coretemp | cpu_thermal) echo "CPU" ;;
-    amdgpu) echo "GPU" ;;
-    nvme) cat "/sys/class/nvme/${dev##*/}/model" 2>/dev/null | trim || echo "NVMe" ;;
-    drivetemp) cat "$dev/model" 2>/dev/null | trim || echo "Drive" ;;
-    ath* | iwlwifi* | mt7* | rtw*) echo "Wi-Fi" ;;
-    acpitz) echo "ACPI" ;;
-    *) echo "$name" ;;
+    k10temp | zenpower | coretemp | cpu_thermal) printf 'cpu\tCPU' ;;
+    amdgpu) printf 'gpu\tGPU' ;;
+    nvme | drivetemp)
+      local model
+      model=$(cat "/sys/class/nvme/${dev##*/}/model" "$dev/model" 2>/dev/null | head -1 | trim)
+      printf '%s\t%s' "${disk:-$(slug "$name")}" "${model:-$disk}" ;;
+    spd5118 | jc42) printf 'ram\tRAM' ;;
+    it87 | nct6775 | nct6683 | asus_ec_sensors | asus_wmi_sensors | gigabyte_wmi) printf 'board\tBoard' ;;
+    ath* | iwlwifi* | mt7* | rtw*) printf 'wifi\tWi-Fi' ;;
+    acpitz) printf 'acpi\tACPI' ;;
+    *) printf '%s\t%s' "$(slug "$name")" "$name" ;;
   esac
 }
 
 sensors='[]'
 cpu=''
 disks='{}'
+declare -A used_ids
+
+unique_id() {
+  local id=$1 n=2
+  while [[ -n ${used_ids[$id]:-} ]]; do id="$1-$n"; n=$((n + 1)); done
+  used_ids[$id]=1
+  echo "$id"
+}
+
+add_sensor() {
+  sensors=$(jq -c --arg id "$1" --arg name "$2" --arg short "$3" --arg path "$4" \
+    '. + [{id: $id, name: $name, short: $short, path: $path}]' <<<"$sensors")
+}
 
 declare -A disk_by_device
 for block in /sys/block/*; do
@@ -27,29 +47,51 @@ for block in /sys/block/*; do
   disk_by_device[$(readlink -f "$block/device")]=${block##*/}
 done
 
+declare -A hwmon_names
 for hwmon in /sys/class/hwmon/hwmon*; do
   name=$(cat "$hwmon/name" 2>/dev/null) || continue
+  hwmon_names[$name]=1
   dev=$(readlink -f "$hwmon/device" 2>/dev/null || true)
-  label=$(hwmon_label "$name" "$dev")
   disk=${disk_by_device[$dev]:-}
+  IFS=$'\t' read -r base label < <(hwmon_kind "$name" "$dev" "$disk")
+  first=1
 
   for input in "$hwmon"/temp*_input; do
     [[ -r $input ]] || continue
     part=$(cat "${input%_input}_label" 2>/dev/null | trim)
-    shown=$label
-    [[ -n $part && $part != "Composite" ]] && shown="$label $part"
-    sensors=$(jq -c --arg name "$shown" --arg path "$input" '. + [{name: $name, path: $path}]' <<<"$sensors")
+    [[ $part == "Composite" ]] && part=''
+    if ((first)); then
+      id=$(unique_id "$base")
+      shown=$label${part:+ $part}
+      short=${disk:-$label}
+    else
+      [[ -n $part ]] || part=$(basename "${input%_input}")
+      id=$(unique_id "$base-$(slug "$part")")
+      shown="$label $part"
+      short=$part
+    fi
+    first=0
+    add_sensor "$id" "$shown" "$short" "$input"
 
-    if [[ -z $cpu && $label == "CPU" ]]; then cpu=$input; fi
+    if [[ -z $cpu && $base == cpu ]]; then cpu=$input; fi
     if [[ -n $disk ]] && ! jq -e --arg d "$disk" 'has($d)' <<<"$disks" >/dev/null; then
       disks=$(jq -c --arg d "$disk" --arg path "$input" '. + {($d): $path}' <<<"$disks")
     fi
   done
 done
 
+# Thermal zones that no hwmon chip already reports, such as a laptop's package or skin sensors.
+for zone in /sys/class/thermal/thermal_zone*; do
+  type=$(cat "$zone/type" 2>/dev/null) || continue
+  [[ -n ${hwmon_names[$type]:-} || ! -r $zone/temp ]] && continue
+  add_sensor "$(unique_id "$(slug "$type")")" "$type" "$type" "$zone/temp"
+done
+
 gpu='{"kind": ""}'
 if command -v nvidia-smi >/dev/null && name=$(nvidia-smi --id=0 --query-gpu=name --format=csv,noheader 2>/dev/null); then
   gpu=$(jq -cn --arg name "$name" '{kind: "nvidia", name: $name}')
+  # No sysfs file: the service fills this one from nvidia-smi.
+  add_sensor "$(unique_id gpu)" "GPU" "GPU" ""
 else
   for card in /sys/class/drm/card[0-9]*; do
     device=$card/device
