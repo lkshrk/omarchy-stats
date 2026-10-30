@@ -37,7 +37,13 @@ BarWidget {
   onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
   readonly property var tempIds: listSetting("temps", ["cpu"])
-  readonly property bool showCharts: setting("charts", true) !== false
+  // true, false, or the cards that get a history chart (net,cpu,ram,disk,gpu,temp).
+  readonly property var chartCards: {
+    var value = setting("charts", true)
+    if (value === true || value === "true") return ["net", "cpu", "ram", "disk", "gpu", "temp"]
+    if (value === false || value === "false") return []
+    return listSetting("charts", [])
+  }
   readonly property var driveMounts: listSetting("drives", null)
 
   function sensorById(id) {
@@ -357,7 +363,8 @@ BarWidget {
   }
 
   component History: StatsChart {
-    visible: root.showCharts
+    property string card
+    visible: root.chartCards.indexOf(card) >= 0
     Layout.fillWidth: true
     Layout.preferredHeight: Style.space(70)
     grid: Qt.rgba(root.muted.r, root.muted.g, root.muted.b, 0.25)
@@ -478,7 +485,7 @@ BarWidget {
       text: block.drive.mount
       detail: [block.drive.model, block.drive.fstype].filter(function(part) { return !!part }).join("  ·  ")
     }
-    History {
+    History { card: "disk";
       series: [
         { values: block.history ? block.history.read : [], color: root.downloadColor },
         { values: block.history ? block.history.write : [], color: root.uploadColor }
@@ -560,7 +567,7 @@ BarWidget {
 
       popupContent: [
         Heading { text: "Network"; detail: root.netDetail && root.netDetail.interface ? root.netDetail.interface : ""; Layout.topMargin: 0 },
-        History {
+        History { card: "net";
           series: [
             { values: root.stats.rxHistory, color: root.downloadColor },
             { values: root.stats.txHistory, color: root.uploadColor }
@@ -590,7 +597,7 @@ BarWidget {
 
       popupContent: [
         Heading { text: "CPU"; detail: root.stats.cpuInfo.model; Layout.topMargin: 0 },
-        History { max: 100; series: [{ values: root.stats.cpuHistory, color: root.accent }] },
+        History { card: "cpu"; max: 100; series: [{ values: root.stats.cpuHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.cpu + "%"
           slices: [
@@ -624,7 +631,7 @@ BarWidget {
 
       popupContent: [
         Heading { text: "Memory"; detail: root.ramDetail ? root.size(root.ramDetail.total) : ""; Layout.topMargin: 0 },
-        History { max: 100; series: [{ values: root.stats.ramHistory, color: root.accent }] },
+        History { card: "ram"; max: 100; series: [{ values: root.stats.ramHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.ram + "%"
           slices: root.ramDetail ? [
@@ -667,7 +674,7 @@ BarWidget {
 
       popupContent: [
         Heading { text: "GPU"; detail: root.stats.gpuName; Layout.topMargin: 0 },
-        History { max: 100; series: [{ values: root.stats.gpuHistory, color: root.accent }] },
+        History { card: "gpu"; max: 100; series: [{ values: root.stats.gpuHistory, color: root.accent }] },
         Field { name: "Usage"; dot: root.accent; value: root.stats.gpu + "%" },
         Heading { text: "Video memory" },
         Meter { fraction: root.stats.gpuVramTotal > 0 ? root.stats.gpuVramUsed / root.stats.gpuVramTotal : 0 },
@@ -703,7 +710,7 @@ BarWidget {
 
       popupContent: [
         Heading { text: "Temperatures"; Layout.topMargin: 0 },
-        History {
+        History { card: "temp";
           max: 100
           fill: false
           series: root.tempIds.map(function(id, i) {

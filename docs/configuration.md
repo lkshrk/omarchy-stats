@@ -29,7 +29,7 @@ To go back to a default, delete the key from the entry in `shell.json`.
 | `temps` | `cpu` | Which temperatures the `temp` item shows, by [sensor id](#sensor-ids). With several, each gets a short label: `CPU 56° GPU 52°`. |
 | `diskMount` | `/` | The mount whose usage the `disk` item shows in the bar. It is also listed first in the disk card. |
 | `drives` | every drive except `/boot` and `/efi` | Which other drives the disk card lists, by mount point, in this order. |
-| `charts` | `true` | The two-minute history charts in the cards. `false` keeps the current values, donuts and bars. |
+| `charts` | `true` | Which cards show the two-minute history chart: `true` (all), `false` (none), or a list of cards (`net`, `cpu`, `ram`, `disk`, `gpu`, `temp`). Without a chart, a card keeps its current values, donuts and bars. |
 | `publicIp` | `false` | Show the public IP in the network card. It is looked up from Cloudflare (`https://1.1.1.1/cdn-cgi/trace`) each time the card opens; with `false` no request is made. |
 | `screens` | every screen | Show the widget only on these screens, by connector name (`DP-1`) or monitor model. |
 
@@ -43,6 +43,9 @@ omarchy bar set lkshrk.stats temps cpu,gpu
 # Disk item shows /home; the card lists /mnt/data, then /boot
 omarchy bar set lkshrk.stats diskMount /home
 omarchy bar set lkshrk.stats drives /mnt/data,/boot
+
+# Charts in the network card only
+omarchy bar set lkshrk.stats charts net
 
 # Only on the main monitor
 omarchy bar set lkshrk.stats screens DP-1

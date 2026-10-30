@@ -11,13 +11,13 @@ source_of() { findmnt -n -o SOURCE --target "$1" | sed 's/\[.*//'; }
 top() { ps -eo comm=,"$1"= --sort=-"$1" | head -5 | jq -R -s -c 'split("\n") | map(select(length>0) | capture("^(?<name>.*?)\\s+(?<value>[0-9.]+)$") | .value |= tonumber)'; }
 
 # The program's file name, so a browser's helper processes count as the browser; the process name for
-# programs whose file is named after a version (2.1.314) or that cannot be read.
+# programs whose file is named after a version (2.1.314) or that cannot be read; nothing once the process is gone.
 program_name() {
   local exe name
   exe=$(readlink "/proc/$1/exe" 2>/dev/null)
   exe=${exe% (deleted)}
   name=${exe##*/}
-  [[ -n $name && ! $name =~ ^[0-9.]+$ ]] || name=$(cat "/proc/$1/comm" 2>/dev/null || echo "$1")
+  [[ -n $name && ! $name =~ ^[0-9.]+$ ]] || name=$(cat "/proc/$1/comm" 2>/dev/null)
   echo "$name"
 }
 
@@ -54,6 +54,7 @@ top_cpu_now() {
   ' "$state" <(echo "$current") | sort -k2 -nr | head -20 |
     while read -r pid share; do
       name=$(program_name "$pid")
+      [[ -n $name ]] || continue
       printf '%s\t%s\n' "$name" "$share"
     done |
     jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], value: (.[1] | tonumber)})
@@ -151,6 +152,7 @@ case $SECTION in
         awk '!/^#/ && $2 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { print $2, $4 }' |
         while read -r pid mb; do
           name=$(program_name "$pid")
+          [[ -n $name ]] || continue
           printf '%s\t%s\n' "$name" "$((mb * 1048576))"
         done |
         jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], value: (.[1] | tonumber)})

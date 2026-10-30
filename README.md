@@ -27,7 +27,7 @@ Update with `omarchy plugin update lkshrk.stats`.
 ```sh
 omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu,temp   # which items show
 omarchy bar set lkshrk.stats temps cpu,gpu                     # temperatures in the bar
-omarchy bar set lkshrk.stats charts false --json               # cards without charts
+omarchy bar set lkshrk.stats charts net                        # charts only in the network card
 ```
 
 All settings, sensor ids and how to get motherboard and RAM temperatures: [docs/configuration.md](docs/configuration.md).
