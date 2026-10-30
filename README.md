@@ -9,7 +9,7 @@ Each reading is its own item in the bar, and clicking one opens its card:
 - **Network:** download and upload speed with a two-minute chart, the interface, local IP, MAC address, DNS server and totals since boot. The public IP is optional (see below).
 - **CPU:** the model, usage with a chart, the system/user/idle split, usage per core with the core and thread count, load average, frequency, uptime and the top processes.
 - **Memory:** usage with a chart, app/cache/free, swap, memory pressure and the top processes.
-- **Disk:** every drive in the same block, the bar's drive first: read and write speed with a chart, a used/free donut, operations per second, busy time, totals since boot and the device.
+- **Disk:** every drive in the same block, the bar's drive first: read and write speed with a chart, a donut of what fills the filesystem (data and metadata on btrfs, else used and reserved) with an outer ring of how the physical disk is partitioned, operations per second, busy time, totals since boot and the device.
 - **GPU:** the model, usage with a chart, video memory, power draw, fan speed and the top processes by video memory. NVIDIA (through `nvidia-smi`) and AMD; the item hides itself without one.
 - **Temperature** (off by default): one or more temperatures in the bar (the CPU's unless set), and a card charting those and listing every temperature sensor (temperatures show only here): CPU, GPU, drives, Wi-Fi, and the motherboard and RAM when their drivers are loaded (see below).
 

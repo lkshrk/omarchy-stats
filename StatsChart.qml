@@ -1,12 +1,13 @@
 import QtQuick
 
-// "line": series = [{values: [...], color}] scaled to max (0 = auto), filled below unless fill is false. "donut": slices = [{value, color}].
+// "line": series = [{values: [...], color}] scaled to max (0 = auto), filled below unless fill is false. "donut": slices = [{value, color}], with an optional thin outer ring from outerSlices.
 Canvas {
   id: chart
 
   property string kind: "line"
   property var series: []
   property var slices: []
+  property var outerSlices: []
   property real max: 0
   property color grid: "#40707880"
   property int capacity: 60
@@ -14,6 +15,7 @@ Canvas {
 
   onSeriesChanged: requestPaint()
   onSlicesChanged: requestPaint()
+  onOuterSlicesChanged: requestPaint()
   onWidthChanged: requestPaint()
   onHeightChanged: requestPaint()
 
@@ -71,30 +73,39 @@ Canvas {
     }
   }
 
-  function paintDonut(ctx) {
+  function paintRing(ctx, list, radius, thickness) {
     var total = 0
-    for (var i = 0; i < slices.length; i++) total += Math.max(0, slices[i].value)
-    var r = Math.min(width, height) / 2 - 1
-    var thickness = Math.max(4, r * 0.32)
+    for (var i = 0; i < list.length; i++) total += Math.max(0, list[i].value)
     var cx = width / 2, cy = height / 2
     var start = -Math.PI / 2
-
     ctx.lineWidth = thickness
     if (total <= 0) {
       ctx.strokeStyle = grid
       ctx.beginPath()
-      ctx.arc(cx, cy, r - thickness / 2, 0, Math.PI * 2)
+      ctx.arc(cx, cy, radius - thickness / 2, 0, Math.PI * 2)
       ctx.stroke()
       return
     }
-    for (var s = 0; s < slices.length; s++) {
-      var sweep = Math.max(0, slices[s].value) / total * Math.PI * 2
+    for (var s = 0; s < list.length; s++) {
+      var sweep = Math.max(0, list[s].value) / total * Math.PI * 2
       if (sweep <= 0) continue
-      ctx.strokeStyle = slices[s].color
+      ctx.strokeStyle = list[s].color
       ctx.beginPath()
-      ctx.arc(cx, cy, r - thickness / 2, start, start + sweep)
+      ctx.arc(cx, cy, radius - thickness / 2, start, start + sweep)
       ctx.stroke()
       start += sweep
     }
+  }
+
+  function paintDonut(ctx) {
+    var r = Math.min(width, height) / 2 - 1
+    if (outerSlices.length === 0) {
+      paintRing(ctx, slices, r, Math.max(4, r * 0.32))
+      return
+    }
+    var outer = Math.max(3, r * 0.12)
+    var gap = Math.max(2, r * 0.06)
+    paintRing(ctx, outerSlices, r, outer)
+    paintRing(ctx, slices, r - outer - gap, Math.max(4, r * 0.24))
   }
 }

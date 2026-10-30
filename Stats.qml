@@ -63,6 +63,11 @@ BarWidget {
   readonly property string driveKeys: shownDrives.map(function(d) { return d.source }).join("\n")
   readonly property string sensorKeys: root.stats.sensors.map(function(t) { return t.id }).join("\n")
   function keys(joined) { return joined === "" ? [] : joined.split("\n") }
+  function partitionName(part) {
+    var all = root.diskDetail && root.diskDetail.drives ? root.diskDetail.drives : []
+    for (var i = 0; i < all.length; i++) if (all[i].partition === part.name) return all[i].mount
+    return (part.label || part.name) + (part.fstype ? "  ·  " + part.fstype : "")
+  }
   function driveBySource(source) { return shownDrives.filter(function(d) { return d.source === source })[0] || null }
   readonly property var screen: QsWindow.window ? QsWindow.window.screen : null
   visible: !(screens instanceof Array) || screens.length === 0
@@ -361,6 +366,7 @@ BarWidget {
 
   component DonutRow: RowLayout {
     property var slices: []
+    property var outerSlices: []
     property string centerText
     default property alias details: legend.data
     Layout.fillWidth: true
@@ -373,6 +379,7 @@ BarWidget {
         anchors.fill: parent
         kind: "donut"
         slices: parent.parent.slices
+        outerSlices: parent.parent.outerSlices
         grid: Qt.rgba(root.muted.r, root.muted.g, root.muted.b, 0.25)
       }
       Text {
@@ -439,6 +446,31 @@ BarWidget {
     readonly property var history: root.stats.diskHistories[drive.disk] || null
     readonly property var totals: root.stats.diskTotals[drive.disk] || null
     readonly property int percent: drive.total > 0 ? Math.round(100 * drive.used / drive.total) : 0
+    readonly property var breakdown: drive.breakdown || ({ kind: "plain" })
+    readonly property bool btrfs: breakdown.kind === "btrfs"
+    readonly property real reserved: Math.max(0, drive.total - drive.used - drive.free)
+    readonly property var fsSlices: btrfs
+      ? [{ value: breakdown.data, color: root.accent }, { value: breakdown.metadata + breakdown.system, color: root.cacheColor }, { value: drive.free, color: root.idleColor }]
+      : [{ value: drive.used, color: root.accent }, { value: reserved, color: root.cacheColor }, { value: drive.free, color: root.idleColor }]
+    // The physical disk's partitions, this drive's in the accent color; slivers under 1% are left out.
+    readonly property var parts: {
+      var layout = drive.layout
+      if (!layout || !layout.parts) return []
+      var palette = ["#a855f7", "#06b6d4", "#22c55e", "#f97316", "#ec4899"]
+      var list = []
+      var allocated = 0
+      var k = 0
+      for (var i = 0; i < layout.parts.length; i++) {
+        var part = layout.parts[i]
+        allocated += part.size
+        var mine = part.name === drive.partition
+        if (!mine && part.size < layout.size * 0.01) continue
+        list.push({ name: root.partitionName(part), size: part.size, color: mine ? root.accent : palette[k++ % palette.length] })
+      }
+      var unallocated = layout.size - allocated
+      if (unallocated > layout.size * 0.01) list.push({ name: "Unallocated", size: unallocated, color: root.idleColor })
+      return list.length > 1 ? list : []
+    }
     Layout.fillWidth: true
     spacing: Style.space(4)
 
@@ -461,13 +493,28 @@ BarWidget {
     }
     DonutRow {
       centerText: block.percent + "%"
-      slices: [
-        { value: block.drive.used, color: root.accent },
-        { value: block.drive.free, color: root.idleColor }
-      ]
-      Field { name: "Used"; dot: root.accent; value: root.size(block.drive.used) }
+      slices: block.fsSlices
+      outerSlices: block.parts.map(function(p) { return { value: p.size, color: p.color } })
+      Field { visible: block.btrfs; name: "Data"; dot: root.accent; value: root.size(block.breakdown.data || 0) }
+      Field { visible: block.btrfs; name: "Metadata"; dot: root.cacheColor; value: root.size((block.breakdown.metadata || 0) + (block.breakdown.system || 0)) }
+      Field { visible: !block.btrfs; name: "Used"; dot: root.accent; value: root.size(block.drive.used) }
+      Field { visible: !block.btrfs && block.reserved > 0; name: "Reserved"; dot: root.cacheColor; value: root.size(block.reserved) }
       Field { name: "Free"; dot: root.idleColor; value: root.size(block.drive.free) }
       Field { name: "Total"; value: root.size(block.drive.total) }
+    }
+    Heading {
+      visible: block.parts.length > 0
+      text: "Disk layout"
+      detail: block.drive.disk + (block.drive.layout ? "  ·  " + root.size(block.drive.layout.size) : "")
+    }
+    Repeater {
+      model: block.parts
+      Field {
+        required property var modelData
+        name: modelData.name
+        dot: modelData.color
+        value: root.size(modelData.size)
+      }
     }
     Field {
       name: "Operations / s"

@@ -58,22 +58,39 @@ case $SECTION in
   disk)
     # One entry per mounted partition; btrfs subvolumes of one partition count once, under their shortest mount.
     main=$(source_of "$MOUNT")
-    findmnt -rn -o SOURCE,TARGET,FSTYPE | awk '$1 ~ /^\/dev\// { sub(/\[.*/, "", $1); print length($2), $1, $2, $3 }' | sort -n | {
+    rows=$(findmnt -rn -o SOURCE,TARGET,FSTYPE | awk '$1 ~ /^\/dev\// { sub(/\[.*/, "", $1); print length($2), $1, $2, $3 }' | sort -n | {
       declare -A seen
       while read -r _ source target fstype; do
         target=$(printf '%b' "$target")
         [[ -n ${seen[$source]:-} ]] && continue
         seen[$source]=1
         disk=$(disk_of "$source")
+        part=$(lsblk -sno NAME,TYPE "$source" 2>/dev/null | awk '$2=="part"{ sub(/^[^a-zA-Z0-9]*/, "", $1); print $1; exit }')
         read -r total used free < <(df -PB1 "$target" 2>/dev/null | awk 'NR==2{print $2, $3, $4}')
         model=$(sed 's/ *$//' "/sys/block/$disk/device/model" 2>/dev/null)
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$source" "$fstype" "$disk" "$model" "${total:-0}" "${used:-0}" "${free:-0}"
+        data='' meta='' sys=''
+        if [[ $fstype == btrfs ]]; then
+          read -r data meta sys < <(btrfs filesystem df -b "$target" 2>/dev/null |
+            awk -F'used=' '/^Data/{d=$2+0} /^Metadata/{m=$2+0} /^System/{s=$2+0} END{print d+0, m+0, s+0}')
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$source" "$fstype" "$disk" "$model" \
+          "${total:-0}" "${used:-0}" "${free:-0}" "${part:-}" "$data" "$meta" "$sys"
       done
-    } | jq -R -s -c --arg main "$main" '
-      {source: $main,
-       drives: (split("\n") | map(select(length > 0) | split("\t")
-         | {mount: .[0], source: .[1], fstype: .[2], disk: .[3], model: .[4],
-            total: (.[5] | tonumber), used: (.[6] | tonumber), free: (.[7] | tonumber)}))}'
+    })
+    blocks=$(lsblk -bnro NAME,SIZE,TYPE,FSTYPE,LABEL,PKNAME 2>/dev/null)
+    jq -R -s -c --arg main "$main" --arg blocks "$blocks" '
+      ($blocks | split("\n") | map(select(length > 0) | split(" ")
+        | {name: .[0], size: (.[1] | tonumber? // 0), type: .[2], fstype: .[3], label: (.[4] | gsub("\\\\x20"; " ")), parent: .[5]})) as $all
+      | ($all | map(select(.type == "disk")) | map(. as $d | {key: $d.name, value: {size: $d.size,
+          parts: ([$all[] | select(.type == "part" and .parent == $d.name)
+            | {name, size, fstype, label}])}}) | from_entries) as $layouts
+      | {source: $main,
+         drives: (split("\n") | map(select(length > 0) | split("\t")
+           | {mount: .[0], source: .[1], fstype: .[2], disk: .[3], model: .[4],
+              total: (.[5] | tonumber), used: (.[6] | tonumber), free: (.[7] | tonumber), partition: .[8],
+              breakdown: (if .[9] != "" then {kind: "btrfs", data: (.[9] | tonumber), metadata: (.[10] | tonumber), system: (.[11] | tonumber)}
+                          else {kind: "plain"} end),
+              layout: ($layouts[.[3]] // null)}))}' <<<"$rows"
     ;;
 
   gpu)
