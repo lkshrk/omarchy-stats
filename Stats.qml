@@ -33,7 +33,7 @@ BarWidget {
   // Connector names or models to show on (Hyprland passes no serial); empty shows it on every screen.
   readonly property var screens: listSetting("screens", [])
   readonly property string diskMount: setting("diskMount", "/")
-  readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk", "gpu"])
+  readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk", "gpu", "temp"])
   onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
   readonly property var tempIds: listSetting("temps", ["cpu"])

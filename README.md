@@ -11,7 +11,7 @@ Each reading is its own item in the bar; click one to open its card:
 - **Memory:** usage with a chart, app/cache/free, swap, pressure and top processes.
 - **Disk:** every drive with a read/write chart, a donut of what fills it and how its disk is partitioned, operations, busy time and totals.
 - **GPU:** model, usage with a chart, video memory, power, fan and top processes. NVIDIA and AMD.
-- **Temperature** (off by default): chosen temperatures in the bar, a chart, and every sensor in the card.
+- **Temperature:** chosen temperatures in the bar (the CPU's by default), a chart, and every sensor in the card.
 
 ## Install
 
@@ -25,9 +25,9 @@ Update with `omarchy plugin update lkshrk.stats`.
 ## Configure
 
 ```sh
-omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu,temp   # which items show
+omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu        # which items show (default: all)
 omarchy bar set lkshrk.stats temps cpu,gpu                     # temperatures in the bar
-omarchy bar set lkshrk.stats charts net                        # charts only in the network card
+omarchy bar set lkshrk.stats charts net                        # charts only in the network card (default: all)
 ```
 
 All settings, sensor ids and how to get motherboard and RAM temperatures: [docs/configuration.md](docs/configuration.md).
