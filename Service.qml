@@ -28,6 +28,7 @@ Item {
   property var sensors: []
   property var diskTemps: ({})
   property var diskRates: ({})
+  property var diskHistories: ({})
 
   property int gpu: 0
   property real gpuVramUsed: 0
@@ -44,7 +45,7 @@ Item {
   property var readHistory: []
   property var writeHistory: []
   property var gpuHistory: []
-  property var cpuTempHistory: []
+  property var sensorHistories: ({})
 
   property string publicIp: ""
 
@@ -124,7 +125,9 @@ Item {
     for (var disk in diskPaths) byDisk[disk] = sensorValue(list, diskPaths[disk])
     diskTemps = byDisk
     diskTemp = diskDevice in byDisk ? byDisk[diskDevice] : -1
-    cpuTempHistory = pushed(cpuTempHistory, Math.max(0, cpuTemp))
+    var histories = {}
+    for (var j = 0; j < list.length; j++) histories[list[j].id] = pushed(sensorHistories[list[j].id] || [], list[j].value)
+    sensorHistories = histories
   }
 
   function readAmdGpu() {
@@ -223,13 +226,18 @@ Item {
     diskRead = rate(cur.dr, p.dr)
     diskWrite = rate(cur.dw, p.dw)
     var rates = {}
+    var histories = {}
     var blocks = sensorInfo && sensorInfo.blocks ? sensorInfo.blocks : [diskDevice]
     for (var b = 0; b < blocks.length; b++) {
       var name = blocks[b]
-      if (name in cur.disks && p.disks && name in p.disks)
-        rates[name] = { read: rate(cur.disks[name].read, p.disks[name].read), write: rate(cur.disks[name].write, p.disks[name].write) }
+      if (!(name in cur.disks) || !p.disks || !(name in p.disks)) continue
+      var r = { read: rate(cur.disks[name].read, p.disks[name].read), write: rate(cur.disks[name].write, p.disks[name].write) }
+      var h = diskHistories[name] || { read: [], write: [] }
+      rates[name] = r
+      histories[name] = { read: pushed(h.read, r.read), write: pushed(h.write, r.write) }
     }
     diskRates = rates
+    diskHistories = histories
 
     cpuHistory = pushed(cpuHistory, cpu)
     ramHistory = pushed(ramHistory, ram)

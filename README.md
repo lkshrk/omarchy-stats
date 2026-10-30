@@ -6,10 +6,10 @@ CPU, memory, disk, network, GPU and temperatures in the [Omarchy](https://omarch
 
 Each reading is its own item in the bar, and clicking one opens its card:
 
-- **Network:** upload and download speed with a two-minute chart, the interface, local IP, MAC address, DNS server and totals since boot. The public IP is optional (see below).
+- **Network:** download and upload speed with a two-minute chart, the interface, local IP, MAC address, DNS server and totals since boot. The public IP is optional (see below).
 - **CPU:** usage with a chart, the system/user/idle split, usage per core, temperature, load average, frequency, uptime and the top processes.
 - **Memory:** usage with a chart, app/cache/free, swap, memory pressure and the top processes.
-- **Disk:** usage of one mount, read and write speed with a chart, the drive's model, device and temperature, and totals since boot; below it every other drive with its usage, read and write speed and temperature.
+- **Disk:** every drive in the same block: read and write speed with a chart, usage, and temperature, the bar's drive first.
 - **GPU:** usage with a chart, video memory, temperature, power draw, fan speed and the top processes by video memory. NVIDIA (through `nvidia-smi`) and AMD; the item hides itself without one.
 - **Temperature** (off by default): one or more temperatures in the bar (the CPU's unless set), and a card with the CPU chart and every temperature sensor: CPU, GPU, drives, Wi-Fi, and the motherboard and RAM when their drivers are loaded (see below).
 
@@ -32,6 +32,7 @@ omarchy bar set lkshrk.stats items net,cpu,temp
 omarchy bar set lkshrk.stats temps cpu,gpu
 omarchy bar set lkshrk.stats diskMount /home
 omarchy bar set lkshrk.stats drives /mnt/data,/boot
+omarchy bar set lkshrk.stats charts false --json
 omarchy bar set lkshrk.stats publicIp true --json
 omarchy bar set lkshrk.stats screens DP-1
 ```
@@ -48,6 +49,7 @@ They are stored as keys on the widget's entry in `~/.config/omarchy/shell.json`,
 | `temps` | `cpu` | Which temperatures the temperature item shows in the bar, by sensor id; several show with a short label each (`CPU 56° GPU 52°`). The card always lists every sensor. |
 | `diskMount` | `"/"` | The mount whose disk the disk item shows in the bar. |
 | `drives` | all but `/boot` and `/efi` | Which other drives the disk card lists, by mount, in this order. |
+| `charts` | `true` | Show the two-minute history charts in the cards; `false` leaves the current values, donuts and bars. |
 | `publicIp` | `false` | Show the public IP in the network card. It is looked up from Cloudflare (`https://1.1.1.1/cdn-cgi/trace`) each time the card opens; with `false` no request is made. |
 | `screens` | all | Show the widget only on these screens, by connector name (`DP-1`) or model. |
 
