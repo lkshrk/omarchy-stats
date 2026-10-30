@@ -27,7 +27,7 @@ BarWidget {
   // Connector names or models to show on (Hyprland passes no serial); empty shows it on every screen.
   readonly property var screens: listSetting("screens", [])
   readonly property string diskMount: setting("diskMount", "/")
-  readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk"])
+  readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk", "gpu"])
   onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
   readonly property var screen: QsWindow.window ? QsWindow.window.screen : null
@@ -36,6 +36,7 @@ BarWidget {
 
   Binding { target: root.stats; property: "diskMount"; value: root.diskMount; when: root.stats !== fallback }
   Binding { target: root.stats; property: "publicIpEnabled"; value: root.showPublicIp; when: root.stats !== fallback }
+  Binding { target: root.stats; property: "gpuEnabled"; value: root.items.indexOf("gpu") >= 0; when: root.stats !== fallback }
 
   QtObject {
     id: fallback
@@ -58,6 +59,21 @@ BarWidget {
     readonly property var readHistory: []
     readonly property var writeHistory: []
     readonly property string publicIp: ""
+    readonly property var cores: []
+    readonly property real cpuTemp: -1
+    readonly property real diskTemp: -1
+    readonly property var sensors: []
+    readonly property var cpuTempHistory: []
+    readonly property string gpuKind: ""
+    readonly property string gpuName: ""
+    readonly property int gpu: 0
+    readonly property real gpuVramUsed: 0
+    readonly property real gpuVramTotal: 0
+    readonly property real gpuTemp: -1
+    readonly property real gpuPower: -1
+    readonly property real gpuPowerLimit: -1
+    readonly property int gpuFan: -1
+    readonly property var gpuHistory: []
     function refreshPublicIp() {}
   }
 
@@ -90,6 +106,7 @@ BarWidget {
     var d = Math.floor(seconds / 86400), h = Math.floor(seconds % 86400 / 3600), m = Math.floor(seconds % 3600 / 60)
     return (d > 0 ? d + "d " : "") + h + "h " + m + "m"
   }
+  function temperature(celsius) { return celsius >= 0 ? Math.round(celsius) + " °C" : "–" }
   function pressureLevel(avg10) {
     if (avg10 >= 30) return "Critical"
     if (avg10 >= 10) return "Warning"
@@ -98,7 +115,7 @@ BarWidget {
 
   Process {
     id: detailProc
-    command: [root.pluginDir + "stats-detail", root.stats.diskMount]
+    command: [root.pluginDir + "stats-detail", root.stats.diskMount, root.openModule === "gpu" ? "gpu" : ""]
     stdout: StdioCollector {
       onStreamFinished: {
         try { root.detail = JSON.parse(String(text)) } catch (e) {}
@@ -134,7 +151,7 @@ BarWidget {
     property int popupWidth: Style.space(300)
     readonly property bool active: root.openModule === module.name
 
-    visible: root.items.indexOf(module.name) >= 0
+    visible: root.items.indexOf(module.name) >= 0 && (module.name !== "gpu" || root.stats.gpuKind !== "")
 
     function close() { if (module.active) root.close() }
 
@@ -268,6 +285,45 @@ BarWidget {
     }
   }
 
+  component Meter: Rectangle {
+    property real fraction: 0
+    Layout.fillWidth: true
+    implicitHeight: Style.space(6)
+    radius: height / 2
+    color: root.idleColor
+    Rectangle {
+      width: parent.width * Math.max(0, Math.min(1, parent.fraction))
+      height: parent.height
+      radius: parent.radius
+      color: root.accent
+    }
+  }
+
+  // One bar per core, filled from the bottom by its usage.
+  component CoreBars: RowLayout {
+    property var values: []
+    Layout.fillWidth: true
+    Layout.preferredHeight: Style.space(36)
+    spacing: Style.space(2)
+    Repeater {
+      model: parent.values
+      Rectangle {
+        required property var modelData
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        radius: Style.space(1)
+        color: root.idleColor
+        Rectangle {
+          anchors.bottom: parent.bottom
+          width: parent.width
+          height: parent.height * Math.max(0, Math.min(1, modelData / 100))
+          radius: parent.radius
+          color: modelData >= 90 ? root.systemColor : root.accent
+        }
+      }
+    }
+  }
+
   component TopList: Repeater {
     id: topList
     property bool memory: false
@@ -279,6 +335,7 @@ BarWidget {
   }
 
   Text { id: percentProbe; visible: false; text: "100%"; font.family: Style.font.family; font.pixelSize: Style.font.body }
+  Text { id: tempProbe; visible: false; text: "100 °C"; font.family: Style.font.family; font.pixelSize: Style.font.body }
   Text { id: speedProbe; visible: false; text: "99.9 KB/s"; font.family: Style.font.family; font.pixelSize: Style.font.body }
 
   RowLayout {
@@ -334,11 +391,14 @@ BarWidget {
           Field { name: "User"; dot: root.userColor; value: root.stats.cpuUser + "%" }
           Field { name: "Idle"; dot: root.idleColor; value: Math.max(0, 100 - root.stats.cpu) + "%" }
         },
+        Heading { text: "Cores"; visible: root.stats.cores.length > 0 },
+        CoreBars { visible: root.stats.cores.length > 0; values: root.stats.cores },
         Heading { text: "Average load" },
         Field { name: "1 minute"; value: root.detail ? root.detail.cpu.load[0].toFixed(2) : "–" },
         Field { name: "5 minutes"; value: root.detail ? root.detail.cpu.load[1].toFixed(2) : "–" },
         Field { name: "15 minutes"; value: root.detail ? root.detail.cpu.load[2].toFixed(2) : "–" },
         Heading { text: "Details" },
+        Field { name: "Temperature"; visible: root.stats.cpuTemp >= 0; value: root.temperature(root.stats.cpuTemp) },
         Field { name: "Frequency"; value: root.detail ? (root.detail.cpu.frequency / 1e9).toFixed(2) + " GHz" : "–" },
         Field { name: "Cores"; value: root.detail ? String(root.detail.cpu.cores) : "–" },
         Field { name: "Uptime"; value: root.detail ? root.duration(root.detail.cpu.uptime) : "–" },
@@ -408,8 +468,55 @@ BarWidget {
         Field { name: "Total"; value: root.detail ? root.size(root.detail.disk.total) : "–" },
         Heading { text: "Details" },
         Field { name: "Device"; value: root.detail ? root.detail.disk.device : "–" },
+        Field { name: "Temperature"; visible: root.stats.diskTemp >= 0; value: root.temperature(root.stats.diskTemp) },
         Field { name: "Total read"; value: root.detail ? root.size(root.detail.disk.totalRead) : "–" },
         Field { name: "Total written"; value: root.detail ? root.size(root.detail.disk.totalWritten) : "–" }
+      ]
+    }
+
+    Module {
+      name: "gpu"
+      BarText { text: "󰢮" }
+      BarText { text: root.stats.gpu + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+
+      popupContent: [
+        Heading { text: root.stats.gpuName || "GPU"; Layout.topMargin: 0 },
+        History { max: 100; series: [{ values: root.stats.gpuHistory, color: root.accent }] },
+        Field { name: "Usage"; value: root.stats.gpu + "%" },
+        Heading { text: "Video memory" },
+        Meter { fraction: root.stats.gpuVramTotal > 0 ? root.stats.gpuVramUsed / root.stats.gpuVramTotal : 0 },
+        Field { name: "Used"; value: root.size(root.stats.gpuVramUsed) + " / " + root.size(root.stats.gpuVramTotal) },
+        Heading { text: "Details" },
+        Field { name: "Temperature"; value: root.temperature(root.stats.gpuTemp) },
+        Field {
+          name: "Power"
+          visible: root.stats.gpuPower >= 0
+          value: root.stats.gpuPower.toFixed(0) + " W" + (root.stats.gpuPowerLimit > 0 ? " / " + root.stats.gpuPowerLimit.toFixed(0) + " W" : "")
+        },
+        Field { name: "Fan"; visible: root.stats.gpuFan >= 0; value: root.stats.gpuFan + "%" },
+        Heading { text: "Top processes"; visible: gpuTop.count > 0 },
+        TopList { id: gpuTop; memory: true; model: root.detail && root.detail.gpu ? root.detail.gpu.top : [] }
+      ]
+    }
+
+    Module {
+      name: "temp"
+      BarText { text: "󰔏" }
+      BarText { text: root.temperature(root.stats.cpuTemp); Layout.minimumWidth: tempProbe.implicitWidth }
+
+      popupContent: [
+        Heading { text: "CPU temperature"; Layout.topMargin: 0 },
+        History { max: 100; series: [{ values: root.stats.cpuTempHistory, color: root.systemColor }] },
+        Heading { text: "Sensors" },
+        Field { name: "GPU"; visible: root.stats.gpuKind === "nvidia" && root.stats.gpuTemp >= 0; value: root.temperature(root.stats.gpuTemp) },
+        Repeater {
+          model: root.stats.sensors
+          Field {
+            required property var modelData
+            name: modelData.name
+            value: root.temperature(modelData.value)
+          }
+        }
       ]
     }
   }

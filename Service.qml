@@ -1,3 +1,4 @@
+import QtQml
 import QtQuick
 import Quickshell.Io
 
@@ -9,6 +10,7 @@ Item {
   readonly property int interval: 2
   property string diskMount: "/"
   property bool publicIpEnabled: false
+  property bool gpuEnabled: false
   readonly property int historySize: 60
 
   property int cpu: 0
@@ -20,6 +22,18 @@ Item {
   property real tx: 0
   property real diskRead: 0
   property real diskWrite: 0
+  property var cores: []
+  property real cpuTemp: -1
+  property real diskTemp: -1
+  property var sensors: []
+
+  property int gpu: 0
+  property real gpuVramUsed: 0
+  property real gpuVramTotal: 0
+  property real gpuTemp: -1
+  property real gpuPower: -1
+  property real gpuPowerLimit: -1
+  property int gpuFan: -1
 
   property var cpuHistory: []
   property var ramHistory: []
@@ -27,11 +41,17 @@ Item {
   property var txHistory: []
   property var readHistory: []
   property var writeHistory: []
+  property var gpuHistory: []
+  property var cpuTempHistory: []
 
   property string publicIp: ""
 
   property string diskDevice: ""
   property var prev: null
+  property var sensorInfo: null
+  readonly property var gpuInfo: sensorInfo && sensorInfo.gpu ? sensorInfo.gpu : ({ kind: "" })
+  readonly property string gpuKind: gpuInfo.kind || ""
+  readonly property string gpuName: gpuInfo.name || ""
 
   function pushed(list, value) {
     var next = list.slice(Math.max(0, list.length - historySize + 1))
@@ -44,16 +64,83 @@ Item {
     return view.loaded ? view.text() : ""
   }
 
-  function cpuSample(text) {
-    var m = text.match(/^cpu\s+(.*)$/m)
-    if (!m) return null
-    var f = m[1].trim().split(/\s+/).map(Number)
+  function cpuTimes(fields) {
+    var f = fields.trim().split(/\s+/).map(Number)
     return {
       user: f[0] + f[1],
       sys: f[2] + f[5] + f[6],
       idle: f[3] + f[4],
       total: f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7]
     }
+  }
+
+  function cpuSample(text) {
+    var m = text.match(/^cpu\s+(.*)$/m)
+    if (!m) return null
+    var sample = cpuTimes(m[1])
+    sample.cores = []
+    var core = /^cpu\d+\s+(.*)$/gm
+    var c
+    while ((c = core.exec(text)) !== null) sample.cores.push(cpuTimes(c[1]))
+    return sample
+  }
+
+  function busy(now, before) {
+    var total = now.total - before.total
+    return total > 0 ? Math.round(100 * (total - (now.idle - before.idle)) / total) : 0
+  }
+
+  function number(text) {
+    var trimmed = String(text).trim()
+    var n = Number(trimmed)
+    return trimmed !== "" && isFinite(n) ? n : -1
+  }
+
+  function celsius(text) {
+    var n = number(text)
+    return n < 0 ? -1 : n / 1000
+  }
+
+  function sensorValue(list, path) {
+    for (var i = 0; i < list.length; i++) if (list[i].path === path) return list[i].value
+    return -1
+  }
+
+  function readSensors() {
+    var list = []
+    for (var i = 0; i < sensorViews.count; i++) {
+      var view = sensorViews.objectAt(i)
+      if (!view) continue
+      var value = celsius(read(view))
+      if (value >= 0) list.push({ name: view.name, value: value, path: view.sensorPath })
+    }
+    sensors = list
+    cpuTemp = sensorValue(list, sensorInfo ? sensorInfo.cpu : "")
+    diskTemp = sensorValue(list, sensorInfo && sensorInfo.disks ? sensorInfo.disks[diskDevice] || "" : "")
+    cpuTempHistory = pushed(cpuTempHistory, Math.max(0, cpuTemp))
+  }
+
+  function readAmdGpu() {
+    gpu = Math.max(0, Math.round(number(read(amdBusy))))
+    gpuVramUsed = Math.max(0, number(read(amdVramUsed)))
+    gpuVramTotal = Math.max(0, number(read(amdVramTotal)))
+    gpuTemp = celsius(read(amdTemp))
+    var microwatts = number(read(amdPower))
+    gpuPower = microwatts > 0 ? microwatts / 1e6 : -1
+    gpuHistory = pushed(gpuHistory, gpu)
+  }
+
+  function nvidiaLine(line) {
+    var f = String(line).split(",")
+    if (f.length < 7) return
+    gpu = Math.max(0, Math.round(number(f[0])))
+    gpuVramUsed = Math.max(0, number(f[1])) * 1048576
+    gpuVramTotal = Math.max(0, number(f[2])) * 1048576
+    gpuTemp = number(f[3])
+    gpuPower = number(f[4])
+    gpuPowerLimit = number(f[5])
+    gpuFan = Math.round(number(f[6]))
+    gpuHistory = pushed(gpuHistory, gpu)
   }
 
   function ramPercent(text) {
@@ -105,6 +192,8 @@ Item {
     }
     var p = prev
     prev = cur
+    readSensors()
+    if (gpuEnabled && gpuKind === "amd") readAmdGpu()
     if (p === null) return
 
     var dt = c && p.cpu ? c.total - p.cpu.total : 0
@@ -115,6 +204,10 @@ Item {
     } else {
       cpu = 0; cpuUser = 0; cpuSystem = 0
     }
+    var usage = []
+    if (c && p.cpu && c.cores.length === p.cpu.cores.length)
+      for (var k = 0; k < c.cores.length; k++) usage.push(busy(c.cores[k], p.cpu.cores[k]))
+    cores = usage
     if (r !== null) ram = r
     rx = rate(cur.rx, p.rx)
     tx = rate(cur.tx, p.tx)
@@ -133,6 +226,57 @@ Item {
   FileView { id: meminfoFile; path: "/proc/meminfo"; blockLoading: true; printErrors: false }
   FileView { id: netFile; path: "/proc/net/dev"; blockLoading: true; printErrors: false }
   FileView { id: diskstatsFile; path: "/proc/diskstats"; blockLoading: true; printErrors: false }
+
+  Process {
+    id: sensorsProc
+    command: [Qt.resolvedUrl("stats-sensors").toString().replace("file://", "")]
+    running: true
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.sensorInfo = JSON.parse(String(text)) } catch (e) {}
+      }
+    }
+  }
+
+  Instantiator {
+    id: sensorViews
+    model: root.sensorInfo ? root.sensorInfo.sensors : []
+    delegate: FileView {
+      required property var modelData
+      readonly property string name: modelData.name
+      readonly property string sensorPath: modelData.path
+      path: modelData.path
+      blockLoading: true
+      printErrors: false
+    }
+  }
+
+  FileView { id: amdBusy; path: root.gpuInfo.busy || ""; blockLoading: true; printErrors: false }
+  FileView { id: amdVramUsed; path: root.gpuInfo.vramUsed || ""; blockLoading: true; printErrors: false }
+  FileView { id: amdVramTotal; path: root.gpuInfo.vramTotal || ""; blockLoading: true; printErrors: false }
+  FileView { id: amdTemp; path: root.gpuInfo.temp || ""; blockLoading: true; printErrors: false }
+  FileView { id: amdPower; path: root.gpuInfo.power || ""; blockLoading: true; printErrors: false }
+
+  // One nvidia-smi streams a line per interval; it runs only while the GPU item is shown.
+  Process {
+    id: nvidiaProc
+    command: ["nvidia-smi", "--id=0",
+      "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed",
+      "--format=csv,noheader,nounits", "-lms", String(root.interval * 1000)]
+    stdout: SplitParser {
+      onRead: function(data) { root.nvidiaLine(data) }
+    }
+  }
+
+  Timer {
+    interval: 5000
+    repeat: true
+    running: root.gpuEnabled && root.gpuKind === "nvidia"
+    triggeredOnStart: true
+    onTriggered: if (!nvidiaProc.running) nvidiaProc.running = true
+  }
+
+  onGpuEnabledChanged: if (!gpuEnabled && nvidiaProc.running) nvidiaProc.running = false
 
   Timer {
     interval: root.interval * 1000

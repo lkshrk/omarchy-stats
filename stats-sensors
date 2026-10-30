@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Usage: stats-sensors prints JSON: the temperature sensors, the CPU and per-disk sensor, and the GPU to read.
+set -u
+
+trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+
+hwmon_label() {
+  local name=$1 dev=$2
+  case $name in
+    k10temp | zenpower | coretemp | cpu_thermal) echo "CPU" ;;
+    amdgpu) echo "GPU" ;;
+    nvme) cat "/sys/class/nvme/${dev##*/}/model" 2>/dev/null | trim || echo "NVMe" ;;
+    drivetemp) cat "$dev/model" 2>/dev/null | trim || echo "Drive" ;;
+    ath* | iwlwifi* | mt7* | rtw*) echo "Wi-Fi" ;;
+    acpitz) echo "ACPI" ;;
+    *) echo "$name" ;;
+  esac
+}
+
+sensors='[]'
+cpu=''
+disks='{}'
+
+declare -A disk_by_device
+for block in /sys/block/*; do
+  [[ -e $block/device ]] || continue
+  disk_by_device[$(readlink -f "$block/device")]=${block##*/}
+done
+
+for hwmon in /sys/class/hwmon/hwmon*; do
+  name=$(cat "$hwmon/name" 2>/dev/null) || continue
+  dev=$(readlink -f "$hwmon/device" 2>/dev/null || true)
+  label=$(hwmon_label "$name" "$dev")
+  disk=${disk_by_device[$dev]:-}
+
+  for input in "$hwmon"/temp*_input; do
+    [[ -r $input ]] || continue
+    part=$(cat "${input%_input}_label" 2>/dev/null | trim)
+    shown=$label
+    [[ -n $part && $part != "Composite" ]] && shown="$label $part"
+    sensors=$(jq -c --arg name "$shown" --arg path "$input" '. + [{name: $name, path: $path}]' <<<"$sensors")
+
+    if [[ -z $cpu && $label == "CPU" ]]; then cpu=$input; fi
+    if [[ -n $disk ]] && ! jq -e --arg d "$disk" 'has($d)' <<<"$disks" >/dev/null; then
+      disks=$(jq -c --arg d "$disk" --arg path "$input" '. + {($d): $path}' <<<"$disks")
+    fi
+  done
+done
+
+gpu='{"kind": ""}'
+if command -v nvidia-smi >/dev/null && name=$(nvidia-smi --id=0 --query-gpu=name --format=csv,noheader 2>/dev/null); then
+  gpu=$(jq -cn --arg name "$name" '{kind: "nvidia", name: $name}')
+else
+  for card in /sys/class/drm/card[0-9]*; do
+    device=$card/device
+    [[ -r $device/gpu_busy_percent ]] || continue
+    hwmon=$(ls -d "$device"/hwmon/hwmon* 2>/dev/null | head -1)
+    power=''
+    for p in power1_average power1_input; do
+      [[ -n $hwmon && -r $hwmon/$p ]] && { power=$hwmon/$p; break; }
+    done
+    name=$(cat "$device/product_name" 2>/dev/null | trim)
+    [[ -n $name ]] || name=$(lspci -s "$(basename "$(readlink -f "$device")")" 2>/dev/null | sed 's/^[^:]*: //; s/^[^:]*: //')
+    gpu=$(jq -cn --arg name "${name:-AMD GPU}" --arg busy "$device/gpu_busy_percent" \
+      --arg vramUsed "$device/mem_info_vram_used" --arg vramTotal "$device/mem_info_vram_total" \
+      --arg temp "${hwmon:+$hwmon/temp1_input}" --arg power "$power" \
+      '{kind: "amd", name: $name, busy: $busy, vramUsed: $vramUsed, vramTotal: $vramTotal, temp: $temp, power: $power}')
+    break
+  done
+fi
+
+jq -cn --argjson sensors "$sensors" --arg cpu "$cpu" --argjson disks "$disks" --argjson gpu "$gpu" \
+  '{sensors: $sensors, cpu: $cpu, disks: $disks, gpu: $gpu}'

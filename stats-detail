@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Usage: stats-detail [disk-mount] prints the popups' JSON snapshot; stats-detail --device [disk-mount] the disk's kernel name.
+# Usage: stats-detail [disk-mount] [gpu] prints the popups' JSON snapshot (gpu adds its top processes); stats-detail --device [disk-mount] the disk's kernel name.
 set -u  # not -e: a failed probe must only blank its own field
 
 if [[ ${1:-} == --device ]]; then device_only=1; shift; fi
 MOUNT="${1:-/}"
+WITH_GPU="${2:-}"
 
 src=$(findmnt -n -o SOURCE --target "$MOUNT" | sed 's/\[.*//')
 dev=$(lsblk -sno NAME,TYPE "$src" 2>/dev/null | awk '$2=="disk"{ sub(/^[^a-zA-Z0-9]*/, "", $1); print $1; exit }')
@@ -35,6 +36,21 @@ dns=$(resolvectl dns 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9a-f.:]
 net_rx=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo 0)
 net_tx=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo 0)
 
+gpu_top='[]'
+if [[ $WITH_GPU == gpu ]] && command -v nvidia-smi >/dev/null; then
+  gpu_top=$(nvidia-smi pmon -c 1 -s m 2>/dev/null |
+    awk '!/^#/ && $2 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { print $2, $4 }' |
+    while read -r pid mb; do
+      exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+      exe=${exe% (deleted)}
+      name=${exe##*/}
+      [[ -n $name ]] || name=$(cat "/proc/$pid/comm" 2>/dev/null || echo "$pid")
+      printf '%s\t%s\n' "$name" "$((mb * 1048576))"
+    done |
+    jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], value: (.[1] | tonumber)})
+      | group_by(.name) | map({name: .[0].name, value: (map(.value) | add)}) | sort_by(-.value) | .[:5]')
+fi
+
 jq -n -c \
   --argjson load1 "$load1" --argjson load5 "$load5" --argjson load15 "$load15" \
   --argjson freq "$freq" --argjson uptime "$uptime_s" --argjson cores "$(nproc)" \
@@ -46,11 +62,12 @@ jq -n -c \
   --arg mount "$MOUNT" --arg device "${dev:-}" --arg fstype "${fstype:-}" --arg diskModel "${model:-}" \
   --argjson totalRead "${total_read:-0}" --argjson totalWritten "${total_written:-0}" \
   --arg iface "${iface:-}" --arg ip "${local_ip:-}" --arg mac "${mac:-}" --arg dns "${dns:-}" \
-  --argjson netRx "${net_rx:-0}" --argjson netTx "${net_tx:-0}" \
+  --argjson netRx "${net_rx:-0}" --argjson netTx "${net_tx:-0}" --argjson gpuTop "${gpu_top:-[]}" \
   '{cpu: {cores: $cores, load: [$load1, $load5, $load15], frequency: $freq, uptime: $uptime, top: $topCpu},
     ram: {total: $memTotal, used: ($memTotal - $memAvail), app: $app, cache: $cache, free: $memFree,
           swapTotal: $swapTotal, swapUsed: ($swapTotal - $swapFree), pressure: $pressure,
           top: ($topMem | map(.value *= 1024))},
     disk: {mount: $mount, device: $device, fstype: $fstype, model: $diskModel, total: $diskTotal, used: $diskUsed, free: $diskFree,
            totalRead: $totalRead, totalWritten: $totalWritten},
-    net: {interface: $iface, ip: $ip, mac: $mac, dns: $dns, totalDownload: $netRx, totalUpload: $netTx}}'
+    net: {interface: $iface, ip: $ip, mac: $mac, dns: $dns, totalDownload: $netRx, totalUpload: $netTx},
+    gpu: {top: $gpuTop}}'
