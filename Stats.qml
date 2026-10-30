@@ -12,7 +12,13 @@ BarWidget {
 
   readonly property var stats: bar?.shell?.serviceFor("lkshrk.stats") ?? fallback
   readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace("file://", "")
-  property var detail: null
+  // Each card's last details, kept so a reopened card shows them at once while fresh ones load.
+  property var details: ({})
+  readonly property var cpuDetail: details.cpu || null
+  readonly property var ramDetail: details.ram || null
+  readonly property var netDetail: details.net || null
+  readonly property var diskDetail: details.disk || null
+  readonly property var gpuDetail: details.gpu || null
   property string openModule: ""
 
   // A list setting may also be a comma-separated string: `omarchy bar set` cannot store an array.
@@ -42,8 +48,8 @@ BarWidget {
 
   // The disk card's drives: the bar's first, then the `drives` mounts in that order, else every drive but /boot and /efi.
   readonly property var shownDrives: {
-    var all = root.detail && root.detail.disk && root.detail.disk.drives ? root.detail.disk.drives : []
-    var main = root.detail ? root.detail.disk.source : ""
+    var all = root.diskDetail && root.diskDetail.drives ? root.diskDetail.drives : []
+    var main = root.diskDetail ? root.diskDetail.source : ""
     var first = all.filter(function(d) { return d.source === main }).map(function(d) {
       return Object.assign({}, d, { mount: root.stats.diskMount })
     })
@@ -103,6 +109,8 @@ BarWidget {
     readonly property real gpuTemp: -1
     readonly property real gpuPower: -1
     readonly property real gpuPowerLimit: -1
+    readonly property var cpuInfo: ({ model: "", cores: 0, threads: 0 })
+    readonly property var diskTotals: ({})
     readonly property int gpuFan: -1
     readonly property var gpuHistory: []
     function refreshPublicIp() {}
@@ -145,36 +153,58 @@ BarWidget {
     return "Normal"
   }
 
-  Process {
-    id: detailProc
-    command: [root.pluginDir + "stats-detail", root.stats.diskMount, root.openModule === "gpu" ? "gpu" : "", root.openModule === "disk" ? "drives" : ""]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try { root.detail = JSON.parse(String(text)) } catch (e) {}
-      }
-    }
-    onExited: if (root.detailPending) {
-      root.detailPending = false
-      Qt.callLater(root.refreshDetail)
-    }
+  // Sections waiting for stats-detail, which runs one at a time; a section already queued is not added again.
+  property var detailQueue: []
+  readonly property var detailSections: ["cpu", "ram", "net", "disk", "gpu"]
+
+  function fetchDetail(section) {
+    if (detailSections.indexOf(section) < 0 || detailQueue.indexOf(section) >= 0) return
+    detailQueue = detailQueue.concat([section])
+    pumpDetail()
   }
 
-  property bool detailPending: false
-  function refreshDetail() {
-    if (detailProc.running) detailPending = true
-    else detailProc.running = true
+  function pumpDetail() {
+    if (detailProc.running || detailQueue.length === 0) return
+    detailProc.section = detailQueue[0]
+    detailQueue = detailQueue.slice(1)
+    detailProc.running = true
+  }
+
+  Process {
+    id: detailProc
+    property string section: ""
+    command: [root.pluginDir + "stats-detail", section, root.stats.diskMount]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var next = Object.assign({}, root.details)
+          next[detailProc.section] = JSON.parse(String(text))
+          root.details = next
+        } catch (e) {}
+      }
+    }
+    onExited: Qt.callLater(root.pumpDetail)
   }
 
   onOpenModuleChanged: {
     if (openModule === "net") stats.refreshPublicIp()
-    if (openModule !== "") refreshDetail()
+    fetchDetail(openModule)
   }
 
   Timer {
     interval: root.stats.interval * 1000
     running: root.openModule !== ""
     repeat: true
-    onTriggered: root.refreshDetail()
+    onTriggered: root.fetchDetail(root.openModule)
+  }
+
+  // The drive list is fetched ahead, so the drive card is complete the first time it opens.
+  Timer {
+    interval: 30000
+    running: root.visible && root.items.indexOf("disk") >= 0
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.fetchDetail("disk")
   }
 
   implicitWidth: row.implicitWidth + Style.spaceReal(8)
@@ -407,7 +437,7 @@ BarWidget {
     readonly property var drive: root.driveBySource(modelData) || ({ mount: "", disk: "", source: modelData, total: 0, used: 0, free: 0 })
     readonly property var rates: root.stats.diskRates[drive.disk] || null
     readonly property var history: root.stats.diskHistories[drive.disk] || null
-    readonly property real temp: drive.disk in root.stats.diskTemps ? root.stats.diskTemps[drive.disk] : -1
+    readonly property var totals: root.stats.diskTotals[drive.disk] || null
     readonly property int percent: drive.total > 0 ? Math.round(100 * drive.used / drive.total) : 0
     Layout.fillWidth: true
     spacing: Style.space(4)
@@ -429,9 +459,29 @@ BarWidget {
       second: block.rates ? root.speed(block.rates.write) : "–"
       secondDot: root.uploadColor
     }
-    Meter { fraction: block.percent / 100 }
-    Field { name: "Used"; value: root.size(block.drive.used) + " / " + root.size(block.drive.total) + "  (" + block.percent + "%)" }
-    Field { name: "Temperature"; visible: block.temp >= 0; value: root.temperature(block.temp) }
+    DonutRow {
+      centerText: block.percent + "%"
+      slices: [
+        { value: block.drive.used, color: root.accent },
+        { value: block.drive.free, color: root.idleColor }
+      ]
+      Field { name: "Used"; dot: root.accent; value: root.size(block.drive.used) }
+      Field { name: "Free"; dot: root.idleColor; value: root.size(block.drive.free) }
+      Field { name: "Total"; value: root.size(block.drive.total) }
+    }
+    Field {
+      name: "Operations / s"
+      value: block.rates ? block.rates.readOps + " read  ·  " + block.rates.writeOps + " write" : "–"
+    }
+    Field { name: "Busy"; value: block.rates ? block.rates.busy + "%" : "–" }
+    Field {
+      name: "Since boot"
+      value: block.totals ? root.size(block.totals.read) + " read  ·  " + root.size(block.totals.write) + " written" : "–"
+    }
+    Field {
+      name: "Device"
+      value: block.drive.disk + (block.drive.source && block.drive.source.indexOf(block.drive.disk) < 0 ? "  ·  " + block.drive.source : "")
+    }
   }
 
   component TopList: Repeater {
@@ -462,7 +512,7 @@ BarWidget {
       BarText { text: root.speed(root.stats.rx); Layout.minimumWidth: speedProbe.implicitWidth; horizontalAlignment: Text.AlignLeft }
 
       popupContent: [
-        Heading { text: "Network"; detail: root.detail && root.detail.net.interface ? root.detail.net.interface : ""; Layout.topMargin: 0 },
+        Heading { text: "Network"; detail: root.netDetail && root.netDetail.interface ? root.netDetail.interface : ""; Layout.topMargin: 0 },
         History {
           series: [
             { values: root.stats.rxHistory, color: root.downloadColor },
@@ -477,12 +527,12 @@ BarWidget {
           secondDot: root.uploadColor
         },
         Heading { text: "Details" },
-        Field { name: "Local IP"; value: root.detail && root.detail.net.ip ? root.detail.net.ip : "–" },
+        Field { name: "Local IP"; value: root.netDetail && root.netDetail.ip ? root.netDetail.ip : "–" },
         Field { name: "Public IP"; visible: root.showPublicIp; value: root.stats.publicIp || "–" },
-        Field { name: "Physical address"; value: root.detail && root.detail.net.mac ? root.detail.net.mac : "–" },
-        Field { name: "DNS server"; value: root.detail && root.detail.net.dns ? root.detail.net.dns : "–" },
-        Field { name: "Total download"; value: root.detail ? root.size(root.detail.net.totalDownload) : "–" },
-        Field { name: "Total upload"; value: root.detail ? root.size(root.detail.net.totalUpload) : "–" }
+        Field { name: "Physical address"; value: root.netDetail && root.netDetail.mac ? root.netDetail.mac : "–" },
+        Field { name: "DNS server"; value: root.netDetail && root.netDetail.dns ? root.netDetail.dns : "–" },
+        Field { name: "Total download"; value: root.netDetail ? root.size(root.netDetail.totalDownload) : "–" },
+        Field { name: "Total upload"; value: root.netDetail ? root.size(root.netDetail.totalUpload) : "–" }
       ]
     }
 
@@ -492,7 +542,7 @@ BarWidget {
       BarText { text: root.stats.cpu + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
-        Heading { text: "CPU"; detail: root.detail ? root.detail.cpu.cores + " threads" : ""; Layout.topMargin: 0 },
+        Heading { text: "CPU"; detail: root.stats.cpuInfo.model; Layout.topMargin: 0 },
         History { max: 100; series: [{ values: root.stats.cpuHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.cpu + "%"
@@ -505,15 +555,18 @@ BarWidget {
           Field { name: "User"; dot: root.userColor; value: root.stats.cpuUser + "%" }
           Field { name: "Idle"; dot: root.idleColor; value: Math.max(0, 100 - root.stats.cpu) + "%" }
         },
-        Heading { text: "Cores"; visible: root.stats.cores.length > 0 },
+        Heading {
+          text: "Cores"
+          visible: root.stats.cores.length > 0
+          detail: root.stats.cpuInfo.cores > 0 ? root.stats.cpuInfo.cores + " cores / " + root.stats.cpuInfo.threads + " threads" : ""
+        },
         CoreBars { visible: root.stats.cores.length > 0; values: root.stats.cores },
         Heading { text: "Details" },
-        Field { name: "Temperature"; visible: root.stats.cpuTemp >= 0; value: root.temperature(root.stats.cpuTemp) },
-        Field { name: "Frequency"; value: root.detail ? (root.detail.cpu.frequency / 1e9).toFixed(2) + " GHz" : "–" },
-        Field { name: "Average load"; value: root.detail ? root.detail.cpu.load.map(function(l) { return l.toFixed(2) }).join("  ") : "–" },
-        Field { name: "Uptime"; value: root.detail ? root.duration(root.detail.cpu.uptime) : "–" },
+        Field { name: "Frequency"; value: root.cpuDetail ? (root.cpuDetail.frequency / 1e9).toFixed(2) + " GHz" : "–" },
+        Field { name: "Average load"; value: root.cpuDetail ? root.cpuDetail.load.map(function(l) { return l.toFixed(2) }).join("  ") : "–" },
+        Field { name: "Uptime"; value: root.cpuDetail ? root.duration(root.cpuDetail.uptime) : "–" },
         Heading { text: "Top processes" },
-        TopList { model: root.detail ? root.detail.cpu.top : [] }
+        TopList { model: root.cpuDetail ? root.cpuDetail.top : [] }
       ]
     }
 
@@ -523,25 +576,25 @@ BarWidget {
       BarText { text: root.stats.ram + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
-        Heading { text: "Memory"; detail: root.detail ? root.size(root.detail.ram.total) : ""; Layout.topMargin: 0 },
+        Heading { text: "Memory"; detail: root.ramDetail ? root.size(root.ramDetail.total) : ""; Layout.topMargin: 0 },
         History { max: 100; series: [{ values: root.stats.ramHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.ram + "%"
-          slices: root.detail ? [
-            { value: root.detail.ram.app, color: root.userColor },
-            { value: root.detail.ram.cache, color: root.cacheColor },
-            { value: root.detail.ram.free, color: root.idleColor }
+          slices: root.ramDetail ? [
+            { value: root.ramDetail.app, color: root.userColor },
+            { value: root.ramDetail.cache, color: root.cacheColor },
+            { value: root.ramDetail.free, color: root.idleColor }
           ] : []
-          Field { name: "App"; dot: root.userColor; value: root.detail ? root.size(root.detail.ram.app) : "–" }
-          Field { name: "Cache"; dot: root.cacheColor; value: root.detail ? root.size(root.detail.ram.cache) : "–" }
-          Field { name: "Free"; dot: root.idleColor; value: root.detail ? root.size(root.detail.ram.free) : "–" }
+          Field { name: "App"; dot: root.userColor; value: root.ramDetail ? root.size(root.ramDetail.app) : "–" }
+          Field { name: "Cache"; dot: root.cacheColor; value: root.ramDetail ? root.size(root.ramDetail.cache) : "–" }
+          Field { name: "Free"; dot: root.idleColor; value: root.ramDetail ? root.size(root.ramDetail.free) : "–" }
         },
         Heading { text: "Details" },
-        Field { name: "Used"; value: root.detail ? root.size(root.detail.ram.used) + " / " + root.size(root.detail.ram.total) : "–" },
-        Field { name: "Swap"; value: root.detail ? root.size(root.detail.ram.swapUsed) + " / " + root.size(root.detail.ram.swapTotal) : "–" },
-        Field { name: "Memory pressure"; value: root.detail ? root.pressureLevel(root.detail.ram.pressure) : "–" },
+        Field { name: "Used"; value: root.ramDetail ? root.size(root.ramDetail.used) + " / " + root.size(root.ramDetail.total) : "–" },
+        Field { name: "Swap"; value: root.ramDetail ? root.size(root.ramDetail.swapUsed) + " / " + root.size(root.ramDetail.swapTotal) : "–" },
+        Field { name: "Memory pressure"; value: root.ramDetail ? root.pressureLevel(root.ramDetail.pressure) : "–" },
         Heading { text: "Top processes" },
-        TopList { memory: true; model: root.detail ? root.detail.ram.top : [] }
+        TopList { memory: true; model: root.ramDetail ? root.ramDetail.top : [] }
       ]
     }
 
@@ -573,7 +626,6 @@ BarWidget {
         Meter { fraction: root.stats.gpuVramTotal > 0 ? root.stats.gpuVramUsed / root.stats.gpuVramTotal : 0 },
         Field { name: "Used"; value: root.size(root.stats.gpuVramUsed) + " / " + root.size(root.stats.gpuVramTotal) },
         Heading { text: "Details" },
-        Field { name: "Temperature"; value: root.temperature(root.stats.gpuTemp) },
         Field {
           name: "Power"
           visible: root.stats.gpuPower >= 0
@@ -581,7 +633,7 @@ BarWidget {
         },
         Field { name: "Fan"; visible: root.stats.gpuFan >= 0; value: root.stats.gpuFan + "%" },
         Heading { text: "Top processes"; visible: gpuTop.count > 0 },
-        TopList { id: gpuTop; memory: true; model: root.detail && root.detail.gpu ? root.detail.gpu.top : [] }
+        TopList { id: gpuTop; memory: true; model: root.gpuDetail ? root.gpuDetail.top : [] }
       ]
     }
 
@@ -606,6 +658,7 @@ BarWidget {
         Heading { text: "Temperatures"; Layout.topMargin: 0 },
         History {
           max: 100
+          fill: false
           series: root.tempIds.map(function(id, i) {
             return { values: root.stats.sensorHistories[id] || [], color: root.seriesColors[i % root.seriesColors.length] }
           })

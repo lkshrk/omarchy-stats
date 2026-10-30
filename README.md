@@ -7,13 +7,13 @@ CPU, memory, disk, network, GPU and temperatures in the [Omarchy](https://omarch
 Each reading is its own item in the bar, and clicking one opens its card:
 
 - **Network:** download and upload speed with a two-minute chart, the interface, local IP, MAC address, DNS server and totals since boot. The public IP is optional (see below).
-- **CPU:** usage with a chart, the system/user/idle split, usage per core, temperature, load average, frequency, uptime and the top processes.
+- **CPU:** the model, usage with a chart, the system/user/idle split, usage per core with the core and thread count, load average, frequency, uptime and the top processes.
 - **Memory:** usage with a chart, app/cache/free, swap, memory pressure and the top processes.
-- **Disk:** every drive in the same block: read and write speed with a chart, usage, and temperature, the bar's drive first.
-- **GPU:** usage with a chart, video memory, temperature, power draw, fan speed and the top processes by video memory. NVIDIA (through `nvidia-smi`) and AMD; the item hides itself without one.
-- **Temperature** (off by default): one or more temperatures in the bar (the CPU's unless set), and a card with the CPU chart and every temperature sensor: CPU, GPU, drives, Wi-Fi, and the motherboard and RAM when their drivers are loaded (see below).
+- **Disk:** every drive in the same block, the bar's drive first: read and write speed with a chart, a used/free donut, operations per second, busy time, totals since boot and the device.
+- **GPU:** the model, usage with a chart, video memory, power draw, fan speed and the top processes by video memory. NVIDIA (through `nvidia-smi`) and AMD; the item hides itself without one.
+- **Temperature** (off by default): one or more temperatures in the bar (the CPU's unless set), and a card charting those and listing every temperature sensor (temperatures show only here): CPU, GPU, drives, Wi-Fi, and the motherboard and RAM when their drivers are loaded (see below).
 
-Readings come from `/proc` and `/sys` every 2 seconds; an NVIDIA GPU is read by one `nvidia-smi` that runs only while the GPU or temperature item is shown. A card's details are read only while it is open.
+Readings come from `/proc` and `/sys` every 2 seconds; an NVIDIA GPU is read by one `nvidia-smi` that runs only while the GPU or temperature item is shown. A card's details are read only while it is open, and kept, so it shows its last figures at once when it opens again; the drive list is read ahead every 30 seconds.
 
 ## Install
 

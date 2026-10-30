@@ -1,6 +1,6 @@
 import QtQuick
 
-// "line": series = [{values: [...], color}] scaled to max (0 = auto). "donut": slices = [{value, color}].
+// "line": series = [{values: [...], color}] scaled to max (0 = auto), filled below unless fill is false. "donut": slices = [{value, color}].
 Canvas {
   id: chart
 
@@ -10,6 +10,7 @@ Canvas {
   property real max: 0
   property color grid: "#40707880"
   property int capacity: 60
+  property bool fill: true
 
   onSeriesChanged: requestPaint()
   onSlicesChanged: requestPaint()
@@ -46,14 +47,17 @@ Canvas {
       var values = series[k].values
       if (values.length < 2) continue
       var x0 = width - (values.length - 1) * step
-      ctx.beginPath()
-      ctx.moveTo(x0, height)
-      for (var j = 0; j < values.length; j++)
-        ctx.lineTo(x0 + j * step, height - Math.min(1, values[j] / top) * height)
-      ctx.lineTo(x0 + (values.length - 1) * step, height)
-      ctx.closePath()
-      ctx.fillStyle = Qt.rgba(series[k].color.r, series[k].color.g, series[k].color.b, 0.25)
-      ctx.fill()
+      if (fill) {
+        ctx.beginPath()
+        ctx.moveTo(x0, height)
+        for (var j = 0; j < values.length; j++)
+          ctx.lineTo(x0 + j * step, height - Math.min(1, values[j] / top) * height)
+        ctx.lineTo(x0 + (values.length - 1) * step, height)
+        ctx.closePath()
+        var tint = Qt.lighter(series[k].color, 1)
+        ctx.fillStyle = Qt.rgba(tint.r, tint.g, tint.b, 0.25)
+        ctx.fill()
+      }
 
       ctx.beginPath()
       for (var m = 0; m < values.length; m++) {

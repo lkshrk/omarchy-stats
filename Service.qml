@@ -29,6 +29,7 @@ Item {
   property var diskTemps: ({})
   property var diskRates: ({})
   property var diskHistories: ({})
+  property var diskTotals: ({})
 
   property int gpu: 0
   property real gpuVramUsed: 0
@@ -54,6 +55,7 @@ Item {
   property var sensorInfo: null
   readonly property var gpuInfo: sensorInfo && sensorInfo.gpu ? sensorInfo.gpu : ({ kind: "" })
   readonly property string gpuKind: gpuInfo.kind || ""
+  readonly property var cpuInfo: sensorInfo && sensorInfo.cpuInfo ? sensorInfo.cpuInfo : ({ model: "", cores: 0, threads: 0 })
   readonly property string gpuName: gpuInfo.name || ""
 
   function pushed(list, value) {
@@ -181,7 +183,8 @@ Item {
     var lines = text.split("\n")
     for (var i = 0; i < lines.length; i++) {
       var f = lines[i].trim().split(/\s+/)
-      if (f.length > 9) bytes[f[2]] = { read: Number(f[5]) * 512, write: Number(f[9]) * 512 }
+      if (f.length > 12)
+        bytes[f[2]] = { read: Number(f[5]) * 512, write: Number(f[9]) * 512, readOps: Number(f[3]), writeOps: Number(f[7]), busyMs: Number(f[12]) }
     }
     return bytes
   }
@@ -227,17 +230,28 @@ Item {
     diskWrite = rate(cur.dw, p.dw)
     var rates = {}
     var histories = {}
+    var totals = {}
     var blocks = sensorInfo && sensorInfo.blocks ? sensorInfo.blocks : [diskDevice]
     for (var b = 0; b < blocks.length; b++) {
       var name = blocks[b]
       if (!(name in cur.disks) || !p.disks || !(name in p.disks)) continue
-      var r = { read: rate(cur.disks[name].read, p.disks[name].read), write: rate(cur.disks[name].write, p.disks[name].write) }
+      var now = cur.disks[name]
+      var before = p.disks[name]
+      var r = {
+        read: rate(now.read, before.read),
+        write: rate(now.write, before.write),
+        readOps: rate(now.readOps, before.readOps),
+        writeOps: rate(now.writeOps, before.writeOps),
+        busy: Math.min(100, Math.max(0, Math.round((now.busyMs - before.busyMs) / (interval * 10))))
+      }
+      totals[name] = { read: now.read, write: now.write }
       var h = diskHistories[name] || { read: [], write: [] }
       rates[name] = r
       histories[name] = { read: pushed(h.read, r.read), write: pushed(h.write, r.write) }
     }
     diskRates = rates
     diskHistories = histories
+    diskTotals = totals
 
     cpuHistory = pushed(cpuHistory, cpu)
     ramHistory = pushed(ramHistory, ram)
@@ -330,7 +344,7 @@ Item {
   Process {
     id: deviceProc
     property string mount: ""
-    command: [Qt.resolvedUrl("stats-detail").toString().replace("file://", ""), "--device", mount]
+    command: [Qt.resolvedUrl("stats-detail").toString().replace("file://", ""), "device", mount]
     stdout: StdioCollector {
       onStreamFinished: if (deviceProc.mount === root.diskMount) root.diskDevice = String(text).trim()
     }

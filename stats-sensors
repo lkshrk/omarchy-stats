@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: stats-sensors prints JSON: every temperature sensor (id, name, short, path), the CPU and per-disk sensor, the physical disks, and the GPU to read.
+# Usage: stats-sensors prints JSON read once at start: every temperature sensor (id, name, short, path), the CPU and per-disk sensor, the physical disks, the CPU's model and core counts, and the GPU to read.
 set -u
 shopt -s nullglob
 
@@ -113,5 +113,15 @@ else
   done
 fi
 
+cpu_info=$(awk -F': *' '
+  /^model name/ && !model { model = $2 }
+  /^processor/ { threads++ }
+  /^physical id/ { pkg = $2 }
+  /^core id/ { cores[pkg ":" $2] = 1 }
+  END { n = 0; for (c in cores) n++; printf "%s\t%d\t%d", model, (n ? n : threads), threads }' /proc/cpuinfo)
+IFS=$'\t' read -r cpu_model cpu_cores cpu_threads <<<"$cpu_info"
+
 jq -cn --argjson sensors "$sensors" --arg cpu "$cpu" --argjson disks "$disks" --argjson blocks "$blocks" --argjson gpu "$gpu" \
-  '{sensors: $sensors, cpu: $cpu, disks: $disks, blocks: $blocks, gpu: $gpu}'
+  --arg cpuModel "$cpu_model" --argjson cpuCores "${cpu_cores:-0}" --argjson cpuThreads "${cpu_threads:-0}" \
+  '{sensors: $sensors, cpu: $cpu, disks: $disks, blocks: $blocks, gpu: $gpu,
+    cpuInfo: {model: $cpuModel, cores: $cpuCores, threads: $cpuThreads}}'
