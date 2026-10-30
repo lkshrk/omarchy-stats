@@ -26,22 +26,24 @@ Then place the **Stats** widget on the bar from the bar settings, or with `omarc
 Set them with `omarchy bar set`:
 
 ```sh
+omarchy bar set lkshrk.stats items net,cpu
 omarchy bar set lkshrk.stats diskMount /home
 omarchy bar set lkshrk.stats publicIp true --json
-omarchy bar set lkshrk.stats screens '["DP-1"]' --json
+omarchy bar set lkshrk.stats screens DP-1
 ```
 
-They are stored as keys on the widget's entry in `~/.config/omarchy/shell.json`:
+They are stored as keys on the widget's entry in `~/.config/omarchy/shell.json`, where lists can also be written as arrays:
 
 ```json
-{ "id": "lkshrk.stats", "diskMount": "/home", "publicIp": true, "screens": ["DP-1"] }
+{ "id": "lkshrk.stats", "items": ["net", "cpu"], "diskMount": "/home", "publicIp": true, "screens": ["DP-1"] }
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `items` | `net,cpu,ram,disk` | Which readings show in the bar: any of `net`, `cpu`, `ram` and `disk`. |
 | `diskMount` | `"/"` | The mount whose disk the disk item shows. |
 | `publicIp` | `false` | Show the public IP in the network card. It is looked up from Cloudflare (`https://1.1.1.1/cdn-cgi/trace`) each time the card opens; with `false` no request is made. |
-| `screens` | `[]` | Show the widget only on these screens, by connector name (`DP-1`) or model. Empty shows it on every screen. |
+| `screens` | all | Show the widget only on these screens, by connector name (`DP-1`) or model. |
 
 Changes apply at once.
 

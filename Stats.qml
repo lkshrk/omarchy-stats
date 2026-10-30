@@ -15,9 +15,20 @@ BarWidget {
   property var detail: null
   property string openModule: ""
 
-  // shell.json "screens": connector names or models to show on (Hyprland passes no serial); empty shows it on every screen.
-  readonly property var screens: setting("screens", [])
+  // A list setting may also be a comma-separated string: `omarchy bar set` cannot store an array.
+  function listSetting(name, fallback) {
+    var value = setting(name, null)
+    if (value instanceof Array) return value
+    if (typeof value === "string" && value.trim() !== "")
+      return value.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
+    return fallback
+  }
+
+  // Connector names or models to show on (Hyprland passes no serial); empty shows it on every screen.
+  readonly property var screens: listSetting("screens", [])
   readonly property string diskMount: setting("diskMount", "/")
+  readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk"])
+  onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
   readonly property var screen: QsWindow.window ? QsWindow.window.screen : null
   visible: !(screens instanceof Array) || screens.length === 0
@@ -122,6 +133,8 @@ BarWidget {
     property alias popupContent: popupColumn.data
     property int popupWidth: Style.space(300)
     readonly property bool active: root.openModule === module.name
+
+    visible: root.items.indexOf(module.name) >= 0
 
     function close() { if (module.active) root.close() }
 
@@ -363,7 +376,7 @@ BarWidget {
     }
 
     Module {
-      name: "ssd"
+      name: "disk"
       BarText { text: "󰋊" }
       BarText { text: root.stats.disk + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
 
