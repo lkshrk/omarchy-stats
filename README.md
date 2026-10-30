@@ -4,72 +4,38 @@ CPU, memory, disk, network, GPU and temperatures in the [Omarchy](https://omarch
 
 ![The widget in the bar: upload and download speed, CPU, memory and disk](assets/bar.png)
 
-Each reading is its own item in the bar, and clicking one opens its card:
+Each reading is its own item in the bar; click one to open its card:
 
-- **Network:** download and upload speed with a two-minute chart, the interface, local IP, MAC address, DNS server and totals since boot. The public IP is optional (see below).
-- **CPU:** the model, usage with a chart, the system/user/idle split, usage per core with the core and thread count, load average, frequency, uptime and the top processes.
-- **Memory:** usage with a chart, app/cache/free, swap, memory pressure and the top processes.
-- **Disk:** every drive in the same block, the bar's drive first: read and write speed with a chart, a donut of what fills the filesystem (data and metadata on btrfs, else used and reserved) with an outer ring of how the physical disk is partitioned, operations per second, busy time, totals since boot and the device.
-- **GPU:** the model, usage with a chart, video memory, power draw, fan speed and the top processes by video memory. NVIDIA (through `nvidia-smi`) and AMD; the item hides itself without one.
-- **Temperature** (off by default): one or more temperatures in the bar (the CPU's unless set), and a card charting those and listing every temperature sensor (temperatures show only here): CPU, GPU, drives, Wi-Fi, and the motherboard and RAM when their drivers are loaded (see below).
-
-Readings come from `/proc` and `/sys` every 2 seconds; an NVIDIA GPU is read by one `nvidia-smi` that runs only while the GPU or temperature item is shown. A card's details are read only while it is open, and kept, so it shows its last figures at once when it opens again; the drive list is read ahead every 30 seconds.
+- **Network:** download and upload speed with a chart, interface, local IP, MAC, DNS and totals; public IP optional.
+- **CPU:** model, usage with a chart, system/user split, per-core bars, load, frequency, uptime and current top processes.
+- **Memory:** usage with a chart, app/cache/free, swap, pressure and top processes.
+- **Disk:** every drive with a read/write chart, a donut of what fills it and how its disk is partitioned, operations, busy time and totals.
+- **GPU:** model, usage with a chart, video memory, power, fan and top processes. NVIDIA and AMD.
+- **Temperature** (off by default): chosen temperatures in the bar, a chart, and every sensor in the card.
 
 ## Install
 
 ```sh
 omarchy plugin add https://github.com/lkshrk/omarchy-stats --enable
+omarchy bar put lkshrk.stats
 ```
 
-Then place the **Stats** widget on the bar from the bar settings, or with `omarchy bar put lkshrk.stats`.
+Update with `omarchy plugin update lkshrk.stats`.
 
-## Settings
-
-Set them with `omarchy bar set`:
+## Configure
 
 ```sh
-omarchy bar set lkshrk.stats items net,cpu,temp
-omarchy bar set lkshrk.stats temps cpu,gpu
-omarchy bar set lkshrk.stats diskMount /home
-omarchy bar set lkshrk.stats drives /mnt/data,/boot
-omarchy bar set lkshrk.stats charts false --json
-omarchy bar set lkshrk.stats publicIp true --json
-omarchy bar set lkshrk.stats screens DP-1
+omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu,temp   # which items show
+omarchy bar set lkshrk.stats temps cpu,gpu                     # temperatures in the bar
+omarchy bar set lkshrk.stats charts false --json               # cards without charts
 ```
 
-They are stored as keys on the widget's entry in `~/.config/omarchy/shell.json`, where lists can also be written as arrays:
-
-```json
-{ "id": "lkshrk.stats", "items": ["net", "cpu", "temp"], "temps": ["cpu", "gpu"], "diskMount": "/home", "publicIp": true, "screens": ["DP-1"] }
-```
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `items` | `net,cpu,ram,disk,gpu` | Which readings show in the bar: any of `net`, `cpu`, `ram`, `disk`, `gpu` and `temp`. |
-| `temps` | `cpu` | Which temperatures the temperature item shows in the bar, by sensor id; several show with a short label each (`CPU 56° GPU 52°`). The card always lists every sensor. |
-| `diskMount` | `"/"` | The mount whose disk the disk item shows in the bar. |
-| `drives` | all but `/boot` and `/efi` | Which other drives the disk card lists, by mount, in this order. |
-| `charts` | `true` | Show the two-minute history charts in the cards; `false` leaves the current values, donuts and bars. |
-| `publicIp` | `false` | Show the public IP in the network card. It is looked up from Cloudflare (`https://1.1.1.1/cdn-cgi/trace`) each time the card opens; with `false` no request is made. |
-| `screens` | all | Show the widget only on these screens, by connector name (`DP-1`) or model. |
-
-Changes apply at once.
-
-### Sensor ids
-
-`cpu` is the CPU package (`Tctl` on AMD), `gpu` the graphics card, a drive is named after its device (`nvme0n1`, `sda`), and further sensors of one chip add their label (`cpu-tccd1`). List the ids on your machine with:
-
-```sh
-~/.config/omarchy/plugins/lkshrk.stats/stats-sensors | jq -r '.sensors[] | "\(.id)\t\(.name)"'
-```
-
-### Motherboard and RAM temperatures
-
-Linux reads these only once their driver is loaded, and the widget picks them up after a shell restart (`omarchy restart shell`). DDR5 memory uses `spd5118`; the motherboard uses a chip-specific driver such as `it87` (Gigabyte, some ASRock), `nct6775` (ASUS, MSI, most ASRock) or `asus_ec_sensors`. `sensors-detect` from `lm_sensors` names the one your board needs. Load it once with `sudo modprobe <driver>`, and on every boot by adding its name to `/etc/modules-load.d/sensors.conf`.
+All settings, sensor ids and how to get motherboard and RAM temperatures: [docs/configuration.md](docs/configuration.md).
+What it reads and how often: [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Requirements
 
-Omarchy 4 with its shell. The card details use `jq`, `ip`, `findmnt`, `lsblk`, `df` and `ps`, and the public IP uses `curl`; all ship with Omarchy. NVIDIA GPUs need `nvidia-smi`, which comes with the NVIDIA driver.
+Omarchy 4. Uses `jq`, `ip`, `findmnt`, `lsblk`, `df` and `ps`, which ship with Omarchy; `curl` for the optional public IP; `nvidia-smi` (from the NVIDIA driver) for NVIDIA GPUs. No root needed.
 
 ## License
 
