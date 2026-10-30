@@ -10,6 +10,57 @@ source_of() { findmnt -n -o SOURCE --target "$1" | sed 's/\[.*//'; }
 
 top() { ps -eo comm=,"$1"= --sort=-"$1" | head -5 | jq -R -s -c 'split("\n") | map(select(length>0) | capture("^(?<name>.*?)\\s+(?<value>[0-9.]+)$") | .value |= tonumber)'; }
 
+# The program's file name, so a browser's helper processes count as the browser; the process name for
+# programs whose file is named after a version (2.1.314) or that cannot be read.
+program_name() {
+  local exe name
+  exe=$(readlink "/proc/$1/exe" 2>/dev/null)
+  exe=${exe% (deleted)}
+  name=${exe##*/}
+  [[ -n $name && ! $name =~ ^[0-9.]+$ ]] || name=$(cat "/proc/$1/comm" 2>/dev/null || echo "$1")
+  echo "$name"
+}
+
+# "pid ticks" for every process: utime + stime from /proc/<pid>/stat (the name in parentheses may hold spaces).
+cpu_ticks() {
+  cat /proc/[0-9]*/stat 2>/dev/null | awk '{
+    end = 0
+    for (i = length($0); i > 0; i--) if (substr($0, i, 1) == ")") { end = i; break }
+    n = split(substr($0, end + 2), f, " ")
+    if (n >= 13) print $1, f[12] + f[13]
+  }'
+}
+
+# Current CPU use per program, as a share of all cores: the change in CPU time since the previous run's snapshot,
+# or over half a second when that snapshot is missing or older than 10 s. A process started since counts all its time.
+top_cpu_now() {
+  local state="${XDG_RUNTIME_DIR:-/tmp}/omarchy-stats-cpu-ticks"
+  local now prev_time=0 hz threads
+  hz=$(getconf CLK_TCK)
+  threads=$(nproc)
+  [[ -r $state ]] && read -r prev_time <"$state"
+  now=$(date +%s%N)
+  if (( now - prev_time > 10000000000 )); then
+    { echo "$now"; cpu_ticks; } >"$state"
+    sleep 0.5
+    now=$(date +%s%N)
+  fi
+  local current
+  current=$(cpu_ticks)
+  awk -v hz="$hz" -v threads="$threads" -v seconds="$(( (now - $(head -1 "$state")) / 1000000 ))" '
+    NR == FNR { if (FNR > 1) before[$1] = $2; next }
+    { used = $2 - ($1 in before ? before[$1] : 0) }
+    used > 0 { printf "%s %.4f\n", $1, used / hz / (seconds / 1000) / threads * 100 }
+  ' "$state" <(echo "$current") | sort -k2 -nr | head -20 |
+    while read -r pid share; do
+      name=$(program_name "$pid")
+      printf '%s\t%s\n' "$name" "$share"
+    done |
+    jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], value: (.[1] | tonumber)})
+      | group_by(.name) | map({name: .[0].name, value: (map(.value) | add)}) | sort_by(-.value) | .[:5]'
+  { echo "$now"; echo "$current"; } >"$state"
+}
+
 case $SECTION in
   device | --device)
     src=$(source_of "$MOUNT")
@@ -22,7 +73,7 @@ case $SECTION in
     freq=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null | awk '{s+=$1; n++} END{ printf "%d", (n ? s/n*1000 : 0) }')
     uptime_s=$(awk '{printf "%d", $1}' /proc/uptime)
     jq -n -c --argjson load1 "$load1" --argjson load5 "$load5" --argjson load15 "$load15" \
-      --argjson freq "${freq:-0}" --argjson uptime "${uptime_s:-0}" --argjson top "$(top pcpu)" \
+      --argjson freq "${freq:-0}" --argjson uptime "${uptime_s:-0}" --argjson top "$(top_cpu_now)" \
       '{load: [$load1, $load5, $load15], frequency: $freq, uptime: $uptime, top: $top}'
     ;;
 
@@ -99,10 +150,7 @@ case $SECTION in
       gpu_top=$(nvidia-smi pmon -c 1 -s m 2>/dev/null |
         awk '!/^#/ && $2 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { print $2, $4 }' |
         while read -r pid mb; do
-          exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
-          exe=${exe% (deleted)}
-          name=${exe##*/}
-          [[ -n $name ]] || name=$(cat "/proc/$pid/comm" 2>/dev/null || echo "$pid")
+          name=$(program_name "$pid")
           printf '%s\t%s\n' "$name" "$((mb * 1048576))"
         done |
         jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], value: (.[1] | tonumber)})
