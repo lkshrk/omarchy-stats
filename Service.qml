@@ -223,9 +223,12 @@ Item {
     diskRead = rate(cur.dr, p.dr)
     diskWrite = rate(cur.dw, p.dw)
     var rates = {}
-    for (var name in cur.disks)
-      if (p.disks && name in p.disks)
+    var blocks = sensorInfo && sensorInfo.blocks ? sensorInfo.blocks : [diskDevice]
+    for (var b = 0; b < blocks.length; b++) {
+      var name = blocks[b]
+      if (name in cur.disks && p.disks && name in p.disks)
         rates[name] = { read: rate(cur.disks[name].read, p.disks[name].read), write: rate(cur.disks[name].write, p.disks[name].write) }
+    }
     diskRates = rates
 
     cpuHistory = pushed(cpuHistory, cpu)

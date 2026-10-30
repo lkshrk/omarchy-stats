@@ -39,14 +39,24 @@ BarWidget {
     return null
   }
 
-  // The disk card's other drives: the `drives` mounts in that order, else every drive but /boot and /efi.
-  readonly property var otherDrives: {
+  // The disk card's drives: the bar's first, then the `drives` mounts in that order, else every drive but /boot and /efi.
+  readonly property var shownDrives: {
     var all = root.detail && root.detail.disk && root.detail.disk.drives ? root.detail.disk.drives : []
     var main = root.detail ? root.detail.disk.source : ""
+    var first = all.filter(function(d) { return d.source === main }).map(function(d) {
+      return Object.assign({}, d, { mount: root.stats.diskMount })
+    })
     var others = all.filter(function(d) { return d.source !== main })
-    if (driveMounts === null) return others.filter(function(d) { return !/^\/(boot|efi)(\/|$)/.test(d.mount) })
-    return driveMounts.map(function(m) { return others.filter(function(d) { return d.mount === m })[0] }).filter(Boolean)
+    others = driveMounts === null
+      ? others.filter(function(d) { return !/^\/(boot|efi)(\/|$)/.test(d.mount) })
+      : driveMounts.map(function(m) { return others.filter(function(d) { return d.mount === m })[0] }).filter(Boolean)
+    return first.concat(others)
   }
+  // Repeaters key on these strings, which change only when the set changes, so the blocks are not rebuilt every sample.
+  readonly property string driveKeys: shownDrives.map(function(d) { return d.source }).join("\n")
+  readonly property string sensorKeys: root.stats.sensors.map(function(t) { return t.id }).join("\n")
+  function keys(joined) { return joined === "" ? [] : joined.split("\n") }
+  function driveBySource(source) { return shownDrives.filter(function(d) { return d.source === source })[0] || null }
   readonly property var screen: QsWindow.window ? QsWindow.window.screen : null
   visible: !(screens instanceof Array) || screens.length === 0
     || (screen !== null && screens.some(function(s) { return s === screen.name || s === screen.model || s === screen.serialNumber }))
@@ -346,15 +356,17 @@ BarWidget {
   component DriveBlock: ColumnLayout {
     id: block
     required property var modelData
-    readonly property var rates: root.stats.diskRates[modelData.disk] || null
-    readonly property real temp: modelData.disk in root.stats.diskTemps ? root.stats.diskTemps[modelData.disk] : -1
+    required property int index
+    readonly property var drive: root.driveBySource(modelData) || ({ mount: "", disk: "", source: modelData, total: 0, used: 0, free: 0 })
+    readonly property var rates: root.stats.diskRates[drive.disk] || null
+    readonly property real temp: drive.disk in root.stats.diskTemps ? root.stats.diskTemps[drive.disk] : -1
     Layout.fillWidth: true
-    Layout.topMargin: Style.space(4)
+    Layout.topMargin: index > 0 ? Style.space(8) : 0
     spacing: Style.space(4)
 
-    Field { name: block.modelData.mount + (block.modelData.model ? "  ·  " + block.modelData.model : ""); value: block.modelData.fstype }
-    Meter { fraction: block.modelData.total > 0 ? block.modelData.used / block.modelData.total : 0 }
-    Field { name: "Used"; value: root.size(block.modelData.used) + " / " + root.size(block.modelData.total) }
+    Field { name: block.drive.mount + (block.drive.model ? "  ·  " + block.drive.model : ""); value: block.drive.fstype }
+    Meter { fraction: block.drive.total > 0 ? block.drive.used / block.drive.total : 0 }
+    Field { name: "Used"; value: root.size(block.drive.used) + " / " + root.size(block.drive.total) }
     Field { name: "Read / write"; visible: block.rates !== null; value: block.rates ? root.speed(block.rates.read) + " / " + root.speed(block.rates.write) : "–" }
     Field { name: "Temperature"; visible: block.temp >= 0; value: root.temperature(block.temp) }
   }
@@ -476,27 +488,8 @@ BarWidget {
       BarText { text: root.stats.disk + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
-        Heading { text: root.detail && root.detail.disk.model ? root.detail.disk.model : "Disk"; Layout.topMargin: 0 },
-        History {
-          series: [
-            { values: root.stats.readHistory, color: root.downloadColor },
-            { values: root.stats.writeHistory, color: root.uploadColor }
-          ]
-        },
-        Field { name: "Read"; dot: root.downloadColor; value: root.speed(root.stats.diskRead) },
-        Field { name: "Write"; dot: root.uploadColor; value: root.speed(root.stats.diskWrite) },
-        Heading { text: root.detail ? root.detail.disk.mount + "  (" + root.detail.disk.fstype + ")" : "Usage" },
-        Meter { fraction: root.stats.disk / 100 },
-        Field { name: "Used"; value: root.detail ? root.size(root.detail.disk.used) + "  (" + root.stats.disk + "%)" : root.stats.disk + "%" },
-        Field { name: "Free"; value: root.detail ? root.size(root.detail.disk.free) : "–" },
-        Field { name: "Total"; value: root.detail ? root.size(root.detail.disk.total) : "–" },
-        Heading { text: "Details" },
-        Field { name: "Device"; value: root.detail ? root.detail.disk.device : "–" },
-        Field { name: "Temperature"; visible: root.stats.diskTemp >= 0; value: root.temperature(root.stats.diskTemp) },
-        Field { name: "Total read"; value: root.detail ? root.size(root.detail.disk.totalRead) : "–" },
-        Field { name: "Total written"; value: root.detail ? root.size(root.detail.disk.totalWritten) : "–" },
-        Heading { text: "Other drives"; visible: root.otherDrives.length > 0 },
-        Repeater { model: root.otherDrives; DriveBlock {} }
+        Heading { text: "Drives"; Layout.topMargin: 0 },
+        Repeater { model: root.keys(root.driveKeys); DriveBlock {} }
       ]
     }
 
@@ -547,11 +540,12 @@ BarWidget {
         History { max: 100; series: [{ values: root.stats.cpuTempHistory, color: root.systemColor }] },
         Heading { text: "Sensors" },
         Repeater {
-          model: root.stats.sensors
+          model: root.keys(root.sensorKeys)
           Field {
             required property var modelData
-            name: modelData.name
-            value: root.temperature(modelData.value)
+            readonly property var sensor: root.sensorById(modelData)
+            name: sensor ? sensor.name : modelData
+            value: sensor ? root.temperature(sensor.value) : "–"
           }
         }
       ]

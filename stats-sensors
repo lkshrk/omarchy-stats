@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: stats-sensors prints JSON: every temperature sensor (id, name, short, path), the CPU and per-disk sensor, and the GPU to read.
+# Usage: stats-sensors prints JSON: every temperature sensor (id, name, short, path), the CPU and per-disk sensor, the physical disks, and the GPU to read.
 set -u
 shopt -s nullglob
 
@@ -42,9 +42,11 @@ add_sensor() {
 }
 
 declare -A disk_by_device
+blocks='[]'
 for block in /sys/block/*; do
   [[ -e $block/device ]] || continue
   disk_by_device[$(readlink -f "$block/device")]=${block##*/}
+  blocks=$(jq -c --arg b "${block##*/}" '. + [$b]' <<<"$blocks")
 done
 
 declare -A hwmon_names
@@ -111,5 +113,5 @@ else
   done
 fi
 
-jq -cn --argjson sensors "$sensors" --arg cpu "$cpu" --argjson disks "$disks" --argjson gpu "$gpu" \
-  '{sensors: $sensors, cpu: $cpu, disks: $disks, gpu: $gpu}'
+jq -cn --argjson sensors "$sensors" --arg cpu "$cpu" --argjson disks "$disks" --argjson blocks "$blocks" --argjson gpu "$gpu" \
+  '{sensors: $sensors, cpu: $cpu, disks: $disks, blocks: $blocks, gpu: $gpu}'
