@@ -8,13 +8,13 @@ Use `omarchy bar set`:
 
 ```sh
 omarchy bar set lkshrk.stats items net,cpu,temp
-omarchy bar set lkshrk.stats charts false --json
+omarchy bar set lkshrk.stats charts net,cpu
 ```
 
 Or edit `shell.json` directly:
 
 ```json
-{ "id": "lkshrk.stats", "items": ["net", "cpu", "temp"], "temps": ["cpu", "gpu"], "charts": false }
+{ "id": "lkshrk.stats", "items": ["net", "cpu", "temp"], "temps": ["cpu", "gpu"], "charts": ["net", "cpu"] }
 ```
 
 Lists can be written as a JSON array or as a comma-separated string. Use the string form with `omarchy bar set`, which cannot store arrays (`--json` turns `["a"]` into `"a"`).
