@@ -2,7 +2,9 @@
 
 CPU, memory, disk, network, GPU and temperatures in the [Omarchy](https://omarchy.org) bar, in the style of the macOS [Stats](https://github.com/exelban/stats) app.
 
-![The widget in the bar: upload and download speed, CPU, memory and disk](assets/bar.png)
+![The widget in the bar: upload and download speed, CPU, memory, disk, GPU and CPU temperature](assets/bar.png)
+
+![The CPU, drive and GPU cards](assets/cards.png)
 
 Each reading is its own item in the bar; click one to open its card:
 
