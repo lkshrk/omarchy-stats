@@ -46,6 +46,19 @@ BarWidget {
     if (value === false || value === "false") return []
     return listSetting("charts", [])
   }
+  // true, false, or the items whose figures turn yellow, then red, when high (cpu,ram,disk,gpu,temp).
+  readonly property var alertItems: {
+    var value = setting("alerts", false)
+    if (value === true || value === "true") return ["cpu", "ram", "disk", "gpu", "temp"]
+    if (value === false || value === "false") return []
+    return listSetting("alerts", [])
+  }
+  readonly property var alertAt: thresholds("alertAt", [80, 95])
+  readonly property var alertTempAt: thresholds("alertTempAt", [80, 90])
+  function thresholds(name, fallback) {
+    var list = listSetting(name, fallback).map(Number)
+    return list.length === 2 && list.every(isFinite) && list[0] <= list[1] ? list : fallback
+  }
   readonly property var driveMounts: listSetting("drives", null)
 
   function sensorById(id) {
@@ -126,6 +139,7 @@ BarWidget {
     readonly property var diskTotals: ({})
     readonly property int gpuFan: -1
     readonly property var gpuHistory: []
+    readonly property var gpuVramHistory: []
     function refreshPublicIp() {}
   }
 
@@ -143,6 +157,22 @@ BarWidget {
   readonly property color cacheColor: "#eab308"
   readonly property var seriesColors: ["#ef4444", "#3b82f6", "#eab308", "#22c55e", "#a855f7", "#06b6d4"]
   readonly property color idleColor: Qt.rgba(Commons.Color.muted.r, Commons.Color.muted.g, Commons.Color.muted.b, 0.35)
+  readonly property color warningColor: "#eab308"
+  readonly property color criticalColor: Commons.Color.urgent
+
+  function alertColor(item, value, fallback) {
+    if (root.alertItems.indexOf(item) < 0 || !(value >= 0)) return fallback
+    var at = item === "temp" ? root.alertTempAt : root.alertAt
+    return value >= at[1] ? root.criticalColor : value >= at[0] ? root.warningColor : fallback
+  }
+  // Usage figures are judged by their last few samples, so a one-sample spike does not flash the bar.
+  function recent(values, current) {
+    var last = (values || []).slice(-3)
+    if (last.length === 0) return current
+    return last.reduce(function(sum, v) { return sum + v }, 0) / last.length
+  }
+  readonly property real cpuLevel: recent(root.stats.cpuHistory, root.stats.cpu)
+  readonly property real gpuUsageLevel: recent(root.stats.gpuHistory, root.stats.gpu)
 
   function scaled(value, units, base) {
     var unit = 0
@@ -339,12 +369,13 @@ BarWidget {
     property string name
     property string value
     property color dot: "transparent"
+    property color valueColor: root.popupText
     Layout.fillWidth: true
     spacing: Style.space(6)
 
     Dot { visible: parent.dot.a > 0; color: parent.dot }
     FieldText { Layout.fillWidth: true; text: parent.name; color: root.muted; elide: Text.ElideRight }
-    FieldText { text: parent.value; color: root.popupText }
+    FieldText { text: parent.value; color: parent.valueColor }
   }
 
   // Two values on one line, each with the dot of its chart line.
@@ -377,6 +408,7 @@ BarWidget {
     property var slices: []
     property var outerSlices: []
     property string centerText
+    property color centerColor: root.popupText
     default property alias details: legend.data
     Layout.fillWidth: true
     spacing: Style.space(12)
@@ -394,7 +426,7 @@ BarWidget {
       Text {
         anchors.centerIn: parent
         text: parent.parent.centerText
-        color: root.popupText
+        color: parent.parent.centerColor
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
@@ -502,6 +534,7 @@ BarWidget {
     }
     DonutRow {
       centerText: block.percent + "%"
+      centerColor: root.alertColor("disk", block.percent, root.popupText)
       slices: block.fsSlices
       outerSlices: block.parts.map(function(p) { return { value: p.size, color: p.color } })
       Field { visible: block.btrfs; name: "Data"; dot: root.accent; value: root.size(block.breakdown.data || 0) }
@@ -595,13 +628,14 @@ BarWidget {
     Module {
       name: "cpu"
       BarText { text: "󰻠" }
-      BarText { text: root.stats.cpu + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+      BarText { text: root.stats.cpu + "%"; color: root.alertColor("cpu", root.cpuLevel, root.barText); Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
         Heading { text: "CPU"; detail: root.stats.cpuInfo.model; Layout.topMargin: 0 },
         History { card: "cpu"; max: 100; series: [{ values: root.stats.cpuHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.cpu + "%"
+          centerColor: root.alertColor("cpu", root.cpuLevel, root.popupText)
           slices: [
             { value: root.stats.cpuSystem, color: root.systemColor },
             { value: root.stats.cpuUser, color: root.userColor },
@@ -629,13 +663,14 @@ BarWidget {
     Module {
       name: "ram"
       BarText { text: "󰍛" }
-      BarText { text: root.stats.ram + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+      BarText { text: root.stats.ram + "%"; color: root.alertColor("ram", root.stats.ram, root.barText); Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
         Heading { text: "Memory"; detail: root.ramDetail ? root.size(root.ramDetail.total) : ""; Layout.topMargin: 0 },
         History { card: "ram"; max: 100; series: [{ values: root.stats.ramHistory, color: root.accent }] },
         DonutRow {
           centerText: root.stats.ram + "%"
+          centerColor: root.alertColor("ram", root.stats.ram, root.popupText)
           slices: root.ramDetail ? [
             { value: root.ramDetail.app, color: root.userColor },
             { value: root.ramDetail.cache, color: root.cacheColor },
@@ -657,7 +692,7 @@ BarWidget {
     Module {
       name: "disk"
       BarText { text: "󰋊" }
-      BarText { text: root.stats.disk + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+      BarText { text: root.stats.disk + "%"; color: root.alertColor("disk", root.stats.disk, root.barText); Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
         Heading {
@@ -672,16 +707,38 @@ BarWidget {
     Module {
       name: "gpu"
       BarText { text: "󰢮" }
-      BarText { text: (root.gpuBarVram ? root.gpuVramPercent : root.stats.gpu) + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+      BarText {
+        text: (root.gpuBarVram ? root.gpuVramPercent : root.stats.gpu) + "%"
+        color: root.alertColor("gpu", root.gpuBarVram ? root.gpuVramPercent : root.gpuUsageLevel, root.barText)
+        Layout.minimumWidth: percentProbe.implicitWidth
+      }
 
       popupContent: [
         Heading { text: "GPU"; detail: root.stats.gpuName; Layout.topMargin: 0 },
-        History { card: "gpu"; max: 100; series: [{ values: root.stats.gpuHistory, color: root.accent }] },
-        Field { name: "Usage"; dot: root.accent; value: root.stats.gpu + "%" },
+        History {
+          card: "gpu"; max: 100
+          series: [
+            { values: root.stats.gpuHistory, color: root.accent },
+            { values: root.stats.gpuVramHistory, color: root.cacheColor }
+          ]
+        },
+        Field {
+          name: "Usage"; dot: root.accent; value: root.stats.gpu + "%"
+          valueColor: root.alertColor("gpu", root.gpuUsageLevel, root.popupText)
+        },
+        Field {
+          name: "Video memory"; dot: root.cacheColor; value: root.gpuVramPercent + "%"
+          valueColor: root.alertColor("gpu", root.gpuVramPercent, root.popupText)
+        },
         Heading { text: "Video memory" },
         Meter { fraction: root.stats.gpuVramTotal > 0 ? root.stats.gpuVramUsed / root.stats.gpuVramTotal : 0 },
         Field { name: "Used"; value: root.size(root.stats.gpuVramUsed) + " / " + root.size(root.stats.gpuVramTotal) },
+        Field { name: "Free"; value: root.size(Math.max(0, root.stats.gpuVramTotal - root.stats.gpuVramUsed)) },
         Heading { text: "Details" },
+        Field {
+          name: "Temperature"; visible: root.stats.gpuTemp >= 0; value: root.temperature(root.stats.gpuTemp)
+          valueColor: root.alertColor("temp", root.stats.gpuTemp, root.popupText)
+        },
         Field {
           name: "Power"
           visible: root.stats.gpuPower >= 0
@@ -705,6 +762,7 @@ BarWidget {
           text: root.tempIds.length > 1
             ? (sensor ? sensor.short : modelData) + " " + (sensor ? Math.round(sensor.value) + "°" : "–")
             : (sensor ? root.temperature(sensor.value) : "–")
+          color: root.alertColor("temp", sensor ? sensor.value : -1, root.barText)
           Layout.leftMargin: index > 0 ? Style.spaceReal(4) : 0
           Layout.minimumWidth: root.tempIds.length > 1 ? 0 : tempProbe.implicitWidth
         }
@@ -728,6 +786,7 @@ BarWidget {
             name: sensor ? sensor.name : modelData
             dot: root.seriesColors[index % root.seriesColors.length]
             value: sensor ? root.temperature(sensor.value) : "–"
+            valueColor: root.alertColor("temp", sensor ? sensor.value : -1, root.popupText)
           }
         },
         Heading { text: "All sensors" },

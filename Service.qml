@@ -46,6 +46,7 @@ Item {
   property var readHistory: []
   property var writeHistory: []
   property var gpuHistory: []
+  property var gpuVramHistory: []
   property var sensorHistories: ({})
 
   property string publicIp: ""
@@ -139,7 +140,12 @@ Item {
     gpuTemp = celsius(read(amdTemp))
     var microwatts = number(read(amdPower))
     gpuPower = microwatts > 0 ? microwatts / 1e6 : -1
+    pushGpuHistory()
+  }
+
+  function pushGpuHistory() {
     gpuHistory = pushed(gpuHistory, gpu)
+    gpuVramHistory = pushed(gpuVramHistory, gpuVramTotal > 0 ? Math.round(100 * gpuVramUsed / gpuVramTotal) : 0)
   }
 
   function nvidiaLine(line) {
@@ -152,7 +158,7 @@ Item {
     gpuPower = number(f[4])
     gpuPowerLimit = number(f[5])
     gpuFan = Math.round(number(f[6]))
-    gpuHistory = pushed(gpuHistory, gpu)
+    pushGpuHistory()
   }
 
   function ramPercent(text) {

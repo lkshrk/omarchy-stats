@@ -12,7 +12,7 @@ Each reading is its own item in the bar; click one to open its card:
 - **CPU:** model, usage with a chart, system/user split, per-core bars, load, frequency, uptime and current top processes.
 - **Memory:** usage with a chart, app/cache/free, swap, pressure and top processes.
 - **Disk:** every drive with a read/write chart, a donut of what fills it and how its disk is partitioned, operations, busy time and totals.
-- **GPU:** model, usage with a chart, video memory, power, fan and top processes. NVIDIA and AMD.
+- **GPU:** model, usage and video memory with a chart, free memory, temperature, power, fan and top processes. NVIDIA and AMD.
 - **Temperature:** chosen temperatures in the bar (the CPU's by default), a chart, and every sensor in the card.
 
 ## Install
@@ -31,6 +31,7 @@ omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu        # which items sho
 omarchy bar set lkshrk.stats temps cpu,gpu                     # temperatures in the bar
 omarchy bar set lkshrk.stats charts net                        # charts only in the network card (default: all)
 omarchy bar set lkshrk.stats gpuBar vram                       # GPU item shows video memory instead of usage
+omarchy bar set lkshrk.stats alerts true                       # high figures turn yellow, then red
 ```
 
 All settings, sensor ids and how to get motherboard and RAM temperatures: [docs/configuration.md](docs/configuration.md).
