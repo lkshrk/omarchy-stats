@@ -36,6 +36,8 @@ BarWidget {
   readonly property var items: listSetting("items", ["net", "cpu", "ram", "disk", "gpu", "temp"])
   onItemsChanged: if (openModule !== "" && items.indexOf(openModule) < 0) close()
   readonly property bool showPublicIp: setting("publicIp", false) === true
+  readonly property bool gpuBarVram: setting("gpuBar", "usage") === "vram"
+  readonly property int gpuVramPercent: root.stats.gpuVramTotal > 0 ? Math.round(100 * root.stats.gpuVramUsed / root.stats.gpuVramTotal) : 0
   readonly property var tempIds: listSetting("temps", ["cpu"])
   // true, false, or the cards that get a history chart (net,cpu,ram,disk,gpu,temp).
   readonly property var chartCards: {
@@ -670,7 +672,7 @@ BarWidget {
     Module {
       name: "gpu"
       BarText { text: "󰢮" }
-      BarText { text: root.stats.gpu + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
+      BarText { text: (root.gpuBarVram ? root.gpuVramPercent : root.stats.gpu) + "%"; Layout.minimumWidth: percentProbe.implicitWidth }
 
       popupContent: [
         Heading { text: "GPU"; detail: root.stats.gpuName; Layout.topMargin: 0 },

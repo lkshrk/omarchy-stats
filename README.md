@@ -30,6 +30,7 @@ Update with `omarchy plugin update lkshrk.stats`.
 omarchy bar set lkshrk.stats items net,cpu,ram,disk,gpu        # which items show (default: all)
 omarchy bar set lkshrk.stats temps cpu,gpu                     # temperatures in the bar
 omarchy bar set lkshrk.stats charts net                        # charts only in the network card (default: all)
+omarchy bar set lkshrk.stats gpuBar vram                       # GPU item shows video memory instead of usage
 ```
 
 All settings, sensor ids and how to get motherboard and RAM temperatures: [docs/configuration.md](docs/configuration.md).

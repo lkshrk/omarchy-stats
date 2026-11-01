@@ -27,6 +27,7 @@ To go back to a default, delete the key from the entry in `shell.json`.
 | --- | --- | --- |
 | `items` | all: `net,cpu,ram,disk,gpu,temp` | Which readings show in the bar, in this fixed order: `net`, `cpu`, `ram`, `disk`, `gpu`, `temp`. `gpu` hides itself on machines without a supported GPU. |
 | `temps` | `cpu` | Which temperatures the `temp` item shows, by [sensor id](#sensor-ids). With several, each gets a short label: `CPU 56° GPU 52°`. |
+| `gpuBar` | `usage` | What the `gpu` item shows in the bar: `usage` (GPU busy %) or `vram` (video memory used, % of total). The card shows both. |
 | `diskMount` | `/` | The mount whose usage the `disk` item shows in the bar. It is also listed first in the disk card. |
 | `drives` | every drive except `/boot` and `/efi` | Which other drives the disk card lists, by mount point, in this order. |
 | `charts` | `true` (all cards) | Which cards show the two-minute history chart: `true` (all), `false` (none), or a list of cards (`net`, `cpu`, `ram`, `disk`, `gpu`, `temp`). Without a chart, a card keeps its current values, donuts and bars. |
